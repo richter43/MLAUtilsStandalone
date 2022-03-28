@@ -10,7 +10,7 @@ class DatasetWSI:
                  class_dict,
                  input_shape,
                  batch_size=32,
-                 tile_size=512,
+                 tile_size=500,
                  overlap=6):
         self.input_shape = input_shape
         self.batch_size = batch_size
@@ -80,7 +80,7 @@ class DatasetWSI:
 
     def _fixup_shape(self, image, label):
         """
-        Tensor.shape is the shape that was determined at graph build time (tf.shape(tensor) gets you the runtime shape).
+        Tensor.shape is determined at graph build time (tf.shape(tensor) gets you the runtime shape).
         In tf.numpy_function/tf.py_function “don’t build a graph for this part, just run it in python”.
         So none of the code in such functions runs during graph building, and TensorFlow does not know the shape in there.
         With the function _fixup_shape we set the shape of the tensors.
