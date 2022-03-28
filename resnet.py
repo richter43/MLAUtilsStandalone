@@ -79,17 +79,16 @@ class ResNet(tf.keras.Model):
         self.global_pool = tf.keras.layers.GlobalAveragePooling2D()
         self.classifier = tf.keras.layers.Dense(self.num_classes, activation="softmax")
 
-
-def call(self, inputs):
-    if self.augment:
-        x = self.augmentation_block(inputs)
-        x = self.block_a(x)
-    else:
-        x = self.block_a(inputs)
-    x = self.block_b(x)
-    x = self.block_c(x)
-    x = self.block_d(x)
-    x = self.block_e(x)
-    x = self.global_pool(x)
-    x = tf.keras.layers.Dropout(0.25)(x)
-    return self.classifier(x)
+    def call(self, inputs):
+        if self.augment:
+            x = self.augmentation_block(inputs)
+            x = self.block_a(x)
+        else:
+            x = self.block_a(inputs)
+        x = self.block_b(x)
+        x = self.block_c(x)
+        x = self.block_d(x)
+        x = self.block_e(x)
+        x = self.global_pool(x)
+        x = tf.keras.layers.Dropout(0.25)(x)
+        return self.classifier(x)
