@@ -52,10 +52,11 @@ class ResnetBlock(tf.keras.layers.Layer):
 
 class ResNet(tf.keras.Model):
 
-    def __init__(self, num_classes=10, augment=False):
+    def __init__(self, input_shape, num_classes=10, augment=False):
         super(ResNet, self).__init__()
         self.num_classes = num_classes
         self.augment = augment
+        self.input = tf.keras.Input(input_shape, dtype=(tf.float32, tf.float32))
         self.augmentation_block = tf.keras.Sequential([
             tf.keras.layers.Resizing(112, 112),
             tf.keras.layers.RandomFlip("horizontal_and_vertical"),
