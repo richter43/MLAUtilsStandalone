@@ -56,7 +56,7 @@ class ResNet(tf.keras.Model):
         super(ResNet, self).__init__()
         self.num_classes = num_classes
         self.augment = augment
-        self.input = tf.keras.Input(input_shape, dtype=tf.float32)
+        self.input_layer = tf.keras.Input(input_shape, dtype=tf.float32)
         self.augmentation_block = tf.keras.Sequential([
             tf.keras.layers.Resizing(112, 112),
             tf.keras.layers.RandomFlip("horizontal_and_vertical"),
@@ -81,11 +81,10 @@ class ResNet(tf.keras.Model):
         self.classifier = tf.keras.layers.Dense(self.num_classes, activation="softmax")
 
     def call(self, inputs):
+        x = self.input_layer(inputs)
         if self.augment:
-            x = self.augmentation_block(inputs)
-            x = self.block_a(x)
-        else:
-            x = self.block_a(inputs)
+            x = self.augmentation_block(x)
+        x = self.block_a(x)
         x = self.block_b(x)
         x = self.block_c(x)
         x = self.block_d(x)
