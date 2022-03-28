@@ -56,23 +56,24 @@ class ResNet(tf.keras.Model):
         super(ResNet, self).__init__()
         self.num_classes = num_classes
         self.augment = augment
-        self.input_layer = tf.keras.layers.InputLayer(input_shape, dtype=tf.float32)
-        self.augmentation_block = tf.keras.Sequential([
+        self.augmentation_block = [
             tf.keras.layers.Resizing(112, 112),
             tf.keras.layers.RandomFlip("horizontal_and_vertical"),
             tf.keras.layers.RandomZoom(
                 height_factor=(-0.05, -0.15),
                 width_factor=(-0.05, -0.15)),
-            tf.keras.layers.RandomRotation(0.3)])
-        self.block_a = tf.keras.Sequential(
-            [tf.keras.layers.Conv2D(64,
-                                    kernel_size=7,
-                                    strides=2,
-                                    padding='same'),
-             tf.keras.layers.BatchNormalization(),
-             tf.keras.layers.MaxPool2D(pool_size=3,
-                                       strides=2,
-                                       padding='same')])
+            tf.keras.layers.RandomRotation(0.3)
+        ]
+        self.block_a = [
+            tf.keras.layers.Conv2D(64,
+                                   kernel_size=7,
+                                   strides=2,
+                                   padding='same'),
+            tf.keras.layers.BatchNormalization(),
+            tf.keras.layers.MaxPool2D(pool_size=3,
+                                      strides=2,
+                                      padding='same')
+        ]
         self.block_b = ResnetBlock(64, 2, downscale=False)
         self.block_c = ResnetBlock(128, 2)
         self.block_d = ResnetBlock(256, 2)
@@ -83,8 +84,10 @@ class ResNet(tf.keras.Model):
     def call(self, inputs):
         x = self.input_layer(inputs)
         if self.augment:
-            x = self.augmentation_block(x)
-        x = self.block_a(x)
+            for layer in self.augmentation_block:
+                x = layer(x)
+        for layer in self.block_a:
+            x = layer(x)
         x = self.block_b(x)
         x = self.block_c(x)
         x = self.block_d(x)
