@@ -3,9 +3,9 @@ from resnet import ResNet
 
 
 class TTAWrapper(tf.keras.Model):
-    def __init__(self, num_classes=10, input_shape=(32, 32, 3)):
+    def __init__(self, keras_model, input_shape=(32, 32, 3)):
         super(TTAWrapper, self).__init__()
-        self.model = ResNet()
+        self.model = keras_model
         self._input_shape = input_shape
         self._uncertainty_metrics = dict()
         self._uncertainty_metrics['entropy'] = self._entropy
