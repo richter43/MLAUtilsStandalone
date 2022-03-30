@@ -33,6 +33,9 @@ class DatasetWSI:
             preview
         ) for slide, label, preview in self.deepZoomObjects]
         self.tilePlaceholders = [item for sublist in self.tilePlaceholders for item in sublist]
+        print(self.tilePlaceholders[0])
+        print(self.tilePlaceholders[1])
+        print(self.tilePlaceholders[2])
         print("Stats:\n{} slides".format(len(self.deepZoomObjects)))
         print("{} tiles".format(len(self.tilePlaceholders)))
         print("{} classes".format(len(set(wsi_labels))))
@@ -96,9 +99,10 @@ class DatasetWSI:
         label.set_shape([self.num_classes])
         return image, label
 
-    def make_dataset(self):
+    def make_dataset(self, shuffle=True):
         dataset = tf.data.Dataset.from_tensor_slices([i for i in range(len(self.tilePlaceholders))])
-        dataset = dataset.shuffle(50000)
+        if shuffle:
+            dataset = dataset.shuffle(50000)
         dataset = dataset.map(lambda x: tf.py_function(self._to_image, [x], Tout=[tf.float32, tf.float32]),
                               num_parallel_calls=8)
         dataset = dataset.filter(self._filter_white)
@@ -107,3 +111,12 @@ class DatasetWSI:
         dataset = dataset.batch(self.batch_size)
         dataset = dataset.prefetch(buffer_size=1)
         return dataset
+
+    def make_heatmap(self, tile_placeholders, width=10, height=10):
+        for tile in tile_placeholders:
+            pil_object = tile['deepZoomObject'].get_tile(tile['level'], tile['coordinates'])
+            pil_object.resize((width, height))
+
+
+
+

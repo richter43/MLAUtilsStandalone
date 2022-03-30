@@ -46,10 +46,9 @@ learning_rate = 0.001
 batch_size = 64
 class_dict = {
     "AC": 0,
-    "AD": 1,
     "H": 2
 }
-checkpoint_filepath = './models_crc/checkpoint_crc_3_cls'
+checkpoint_filepath = './models_crc/checkpoint_crc_2_cls'
 # ----------------------
 num_classes = len(class_dict.keys())
 wsi_file_paths = glob(os.path.join(rootdir_wsi, '*.svs'))
