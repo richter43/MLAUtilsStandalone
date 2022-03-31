@@ -106,7 +106,7 @@ class DatasetWSI:
         dataset = dataset.map(lambda x: tf.py_function(self._to_image, [x], Tout=[tf.float32, tf.float32]),
                               num_parallel_calls=8)
         dataset = dataset.filter(self._filter_white)
-        dataset = dataset.filter(lambda x, label: tf.py_function(self._filter_border, [x], tf.bool))
+        # dataset = dataset.filter(lambda x, label: tf.py_function(self._filter_border, [x], tf.bool))
         dataset = dataset.map(lambda x, y: self._fixup_shape(x, y))
         dataset = dataset.batch(self.batch_size)
         dataset = dataset.prefetch(buffer_size=1)
