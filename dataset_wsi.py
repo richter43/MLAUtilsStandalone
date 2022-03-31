@@ -112,10 +112,6 @@ class DatasetWSI:
         dataset = dataset.prefetch(buffer_size=1)
         return dataset
 
-    def make_heatmap(self, tile_placeholders, width=10, height=10):
-        for tile in tile_placeholders:
-            pil_object = tile['deepZoomObject'].get_tile(tile['level'], tile['coordinates'])
-            pil_object.resize((width, height))
 
 
 
