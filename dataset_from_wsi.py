@@ -1,4 +1,5 @@
 import math
+import numpy as np
 import openslide
 import tensorflow as tf
 
@@ -87,12 +88,16 @@ class DatasetManager:
                  tile_new_size=None,
                  channels=3,
                  batch_size=32,
+                 one_hot=True,
+                 std_threshold=20,
                  verbose=0):
         if tile_new_size:
             self.new_size = tile_new_size
         else:
             self.new_size = tile_size
         self.crop_size = tile_size
+        self.one_hot = one_hot
+        self.std_threshold = std_threshold
         self.num_classes = len(set(labels))
         self.channels = channels
         self.batch_size = batch_size
@@ -114,37 +119,26 @@ class DatasetManager:
                                         self.tile_placeholders[x.numpy()]['size']])
         pil_object = pil_object.convert('RGB')
         pil_object = pil_object.resize(size=(self.new_size, self.new_size))
+        self.tile_placeholders[x.numpy()]['std'] = np.std(np.array(pil_object))
         label = self.tile_placeholders[x.numpy()]['label']
         im_size = pil_object.size
         img = tf.reshape(tf.cast(pil_object.getdata(), dtype=tf.uint8), (im_size[0], im_size[1], 3))
-        return tf.image.convert_image_dtype(img, dtype=tf.float32), tf.cast(tf.one_hot(label,
-                                                                                       self.num_classes,
-                                                                                       name='label', axis=-1),
-                                                                            tf.float32)
-
-    def _filter_image(self, x):
-        slide = openslide.OpenSlide(self.tile_placeholders[x.numpy()]['filepath_slide'])
-        pil_object = slide.read_region([self.tile_placeholders[x.numpy()]['left'],
-                                        self.tile_placeholders[x.numpy()]['top']],
-                                       self.tile_placeholders[x.numpy()]['level'],
-                                       [self.tile_placeholders[x.numpy()]['size'],
-                                        self.tile_placeholders[x.numpy()]['size']])
-        pil_object = pil_object.convert('RGB')
-        if pil_object.thumbnail((1, 1)).getpixel(0, 0) < 0.02:
-            self.tile_placeholders[x.numpy()]['removed'] = True
-            return True
+        if self.tile_placeholders[x.numpy()]['std'] > self.std_threshold:
+            return tf.image.convert_image_dtype(img, dtype=tf.float32), tf.cast(label, tf.float32)
         else:
-            self.tile_placeholders[x.numpy()]['removed'] = False
-            return False
-
-    def py_function_filter(self, x):
-        return tf.py_function(self._filter_image, x, tf.bool)
+            return tf.image.convert_image_dtype(img, dtype=tf.float32), tf.cast(-1, tf.float32)
 
     @staticmethod
     def _filter_white(x, label):
-        if tf.reduce_mean(tf.math.reduce_std(x, axis=-1)) < 0.02:
+        if tf.math.equal(label, -1):
             return False
         return True
+
+    def _to_one_hot(self, image, label):
+        return image, tf.cast(tf.one_hot(tf.cast(label, tf.int32),
+                                         self.num_classes,
+                                         name='label', axis=-1),
+                              tf.float32)
 
     def _fixup_shape(self, image, label):
         """
@@ -156,31 +150,29 @@ class DatasetManager:
         image.set_shape([self.new_size,
                          self.new_size,
                          self.channels])
-        label.set_shape([self.num_classes])
+        if self.one_hot:
+            label.set_shape([self.num_classes])
+        else:
+            label.set_shape([])
         return image, label
 
     def make_dataset(self, shuffle=True):
         dataset = tf.data.Dataset.from_tensor_slices([i for i in range(len(self.tile_placeholders))])
         if shuffle:
             dataset = dataset.shuffle(50000)
-        dataset = dataset.filter(self.py_function_filter)
         dataset = dataset.map(lambda x: tf.py_function(self._to_image, [x], Tout=[tf.float32, tf.float32]),
                               num_parallel_calls=8)
-        # dataset = dataset.filter(self._filter_white)
+        dataset = dataset.filter(self._filter_white)
+        if self.one_hot:
+            dataset = dataset.map(self._to_one_hot)
         dataset = dataset.map(lambda x, y: self._fixup_shape(x, y))
         dataset = dataset.batch(self.batch_size)
         dataset = dataset.prefetch(buffer_size=1)
         return dataset
 
-    # @property
-    # def get_tile_placeholders(self):
-    #     dataset = tf.data.Dataset.from_tensor_slices((
-    #         [tile_placeholder for tile_placeholder in self.tile_placeholders],
-    #         [i for i in range(len(self.tile_placeholders))]
-    #     ))
-    #
-    #     dataset = dataset.filter(self._filter_white)
-    #     return dataset
+    @property
+    def get_tile_placeholders(self):
+        return self.tile_placeholders
 
 
 
