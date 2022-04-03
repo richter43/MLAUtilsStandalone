@@ -40,19 +40,19 @@ from resnet import ResNet
 from dataset_from_wsi import DatasetManager
 from sklearn import model_selection
 # ----------------------
-tile_size = 700
+tile_size = 1000
 tile_new_size = 112
 overlap = 1
 epochs = 100
 learning_rate = 0.01
-batch_size = 32
+batch_size = 16
 channels = 3
 class_dict = {
     "AC": 0,
     "AD": 1,
     "H": 2
 }
-checkpoint_filepath = './models_crc/checkpoint_crc_3_cls_from_scratch'
+checkpoint_filepath = './models_crc/checkpoint_crc_3_cls'
 # ----------------------
 input_shape = (tile_new_size, tile_new_size, channels)
 num_classes = len(class_dict.keys())
@@ -185,8 +185,8 @@ x = tf.keras.applications.resnet_v2.preprocess_input(inputs)
 # x = tf.keras.layers.Resizing(64, 64)(x)
 for layer in augmentation_block:
     x = layer(x, training=False)
-base_model = tf.keras.applications.ResNet101V2(include_top=False, weights="imagenet")
-for j, layer in enumerate(base_model.layers[:200]):
+base_model = tf.keras.applications.ResNet50V2(include_top=False, weights="imagenet")
+for j, layer in enumerate(base_model.layers[:100]):
     layer.trainable = False
 x = base_model(x)
 x = tf.keras.layers.GlobalAveragePooling2D()(x)
