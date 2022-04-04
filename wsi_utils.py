@@ -1,7 +1,10 @@
+import os
 import math
-import numpy as np
 import openslide
+import numpy as np
 import tensorflow as tf
+from matplotlib import cm
+from PIL import Image, ImageFilter
 
 
 class SlideManager:
@@ -9,8 +12,6 @@ class SlideManager:
         """
         # SlideManager provides an easy way to generate a cropList object.
         # This object is not tied to a particular slide and can be reused to crop many slides using the same settings.
-        @param tile_size: crop_size
-        @param overlap: overlap (%)
         """
         self.tile_size = tile_size
         self.level = 0
@@ -175,25 +176,91 @@ class DatasetManager:
         return self.tile_placeholders
 
 
+def get_heatmap(tile_placeholders,
+                class_to_map,
+                dir_save,
+                tile_placeholders_mapping_key='predictions',
+                colormap=cm.get_cmap('Blues'), lv=-1):
 
+    """
+    Builds a 3 channel map.
+    The first three channels represent the sum of all the probabilities of the crops which contain that pixel
+    belonging to classes 0-1, the fourth hold the number of crops which contain it.
+    """
 
+    slide = openslide.OpenSlide(tile_placeholders['filepath_slide'])
+    level_downsample = 1 / slide.level_downsamples[lv]
+    n_classes = len(set([tile['label'] for tile in tile_placeholders]))
 
+    if 'openslide.bounds-width' in slide.properties.keys():
+        # Here to consider only the rectangle bounding the non-empty region of the slide, if available.
+        # These properties are in the level 0 reference frame.
+        bounds_width = int(slide.properties['openslide.bounds-width'])
+        bounds_height = int(slide.properties['openslide.bounds-height'])
+        bounds_x = int(slide.properties['openslide.bounds-x'])
+        bounds_y = int(slide.properties['openslide.bounds-y'])
 
+        region_lv0 = (bounds_x,
+                      bounds_y,
+                      bounds_width,
+                      bounds_height)
+    else:
+        # If bounding box of the non-empty region of the slide is not available
+        size = slide.level_dimensions[lv]
+        # Slide dimensions of given level reported to level 0
+        region_lv0 = (0, 0, size[0] / level_downsample, size[1] / level_downsample)
 
+    region_lv0 = [round(x) for x in region_lv0]
+    region_lv_selected = [round(x * level_downsample) for x in region_lv0]
+    probabilities = np.zeros((region_lv_selected[3], region_lv_selected[2], 3))
+    for tile in tile_placeholders:
+        top = math.ceil(tile['top'] * level_downsample)
+        left = math.ceil(tile['left'] * level_downsample)
+        side = math.ceil((tile['size'] * slide.level_downsamples[tile['level']]) * level_downsample)
+        top -= region_lv_selected[1]
+        left -= region_lv_selected[0]
+        side_x = side
+        side_y = side
+        if top < 0:
+            side_y += top
+            top = 0
+        if left < 0:
+            side_x += left
+            left = 0
+        if side_x > 0 and side_y > 0:
+            val = probabilities[top:top + side_y, left:left + side_x, 0:n_classes]
+            probabilities[top:top + side_y, left:left + side_x, 0:n_classes] = val + np.array(
+                tile[tile_placeholders_mapping_key])
+            probabilities[top:top + side_y, left:left + side_x, n_classes] = \
+                probabilities[top:top + side_y, left:left + side_x, n_classes] + 1
 
+    # Dividing the first three channels by the fourth, every channel now becomes a probability map.
+    # Each value is between 0 and 1 and represents the average of all votes for that pixel.
+    # The map is then converted to uint8 to be saved as an 8bpc image.
+    probabilities = np.divide(probabilities[:, :, 0:n_classes], probabilities[:, :, n_classes:n_classes+1],
+                              where=probabilities[:, :, n_classes:n_classes+1] != 0)
+    probabilities = probabilities * 255
+    probabilities = probabilities.astype('uint8')
 
+    map_ = probabilities[:, :, class_to_map]
+    map_ = Image.fromarray(map_).filter(ImageFilter.GaussianBlur(3))
+    map_ = np.array(map_) / 255
 
+    alpha = Image.fromarray(((map_ + 0.01) * 255 * 1.5).astype('uint8'))
+    map_[map_ < 0.5] = 0
 
+    map_ = colormap(np.array(map_))
+    roi_map = Image.fromarray((map_ * 255).astype('uint8'))
+    roi_map.putalpha(50)
 
+    slide_image = slide.read_region((region_lv0[0], region_lv0[1]), lv,
+                                    (region_lv_selected[2], region_lv_selected[3]))
+    slide_image.alpha_composite(roi_map)
+    slide_image.convert('RGBA')
 
-
-
-
-
-
-
-
-
-
-
-
+    roi_map.putalpha(alpha)
+    # Compose image and save
+    slide_image.alpha_composite(roi_map)
+    filepath = os.path.join(dir_save, '_heatmap.bmp')
+    print("Heatmap saved at {}".format(filepath))
+    slide_image.save(os.path.join(dir_save))
