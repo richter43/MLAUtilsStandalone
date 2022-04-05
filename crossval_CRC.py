@@ -8,16 +8,16 @@ from wsi_utils import DatasetManager
 from sklearn import model_selection
 
 # -------------------------------------------------
-os.environ["CUDA_VISIBLE_DEVICES"] = '1'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = 'true'
 rootdir_wsi = "/space/ponzio/CRC_ROIs_4_classes/"
 rootdir_src = "/space/ponzio/teaching-MLinAPP/src/"
-output_dir = "../models_crc"
+output_dir = "../models_crc_2folds_2000x2000"
 checkpoint_filename = "HvsNH.h5"
-n_splits = 3
-tile_size = 1000
+n_splits = 2
+tile_size = 2000
 tile_new_size = 112
-overlap = 1
+overlap = 0.333
 epochs = 10
 learning_rate = 0.01
 batch_size = 64
@@ -47,7 +47,7 @@ df = pd.DataFrame([os.path.basename(slide).split('.')[0].split('_') for slide in
                                                                                                            "Dysplasia",
                                                                                                            "#-Annotation"])
 df['Path'] = wsi_file_paths
-splitter = model_selection.GroupShuffleSplit(test_size=.4, n_splits=n_splits, random_state=7)
+splitter = model_selection.GroupShuffleSplit(test_size=.5, n_splits=n_splits, random_state=7)
 split = splitter.split(df, groups=df['Patient'])
 # Make dataset <<<<
 fold = 1
@@ -69,6 +69,7 @@ for train_inds, test_inds in split:
                                            wsi_labels_numerical_train,
                                            tile_size=tile_size,
                                            tile_new_size=tile_new_size,
+                                           overlap=overlap,
                                            channels=channels,
                                            batch_size=batch_size)
     dataset_train = dataset_manager_train.make_dataset()
