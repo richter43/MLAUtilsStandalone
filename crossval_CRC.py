@@ -12,20 +12,21 @@ os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = 'true'
 rootdir_wsi = "/space/ponzio/CRC_ROIs_4_classes/"
 rootdir_src = "/space/ponzio/teaching-MLinAPP/src/"
-output_dir = "../models_crc_2folds_2000x2000"
+output_dir = "../models_crc_5-04"
 checkpoint_filename = "HvsNH.h5"
 n_splits = 2
-tile_size = 2000
+tile_size = 500
 tile_new_size = 112
-overlap = 0.333
+overlap = 1
 epochs = 10
 learning_rate = 0.01
-batch_size = 64
+batch_size = 128
 channels = 3
+num_classes = 2
 class_dict = {
-    "AC": 0,
-    "AD": 0,
-    "H": 1
+    "AC": 1,
+    "AD": 1,
+    "H": 0
 }
 plot_class_dict = {
     0: "H",
@@ -37,7 +38,6 @@ try:
 except FileExistsError:
     print("{} exists.".format(output_dir))
 input_shape = (tile_new_size, tile_new_size, channels)
-num_classes = len(set(class_dict.values()))
 
 # Make dataset >>>>
 wsi_file_paths = glob(os.path.join(rootdir_wsi, '*.svs'))
@@ -47,19 +47,19 @@ df = pd.DataFrame([os.path.basename(slide).split('.')[0].split('_') for slide in
                                                                                                            "Dysplasia",
                                                                                                            "#-Annotation"])
 df['Path'] = wsi_file_paths
-splitter = model_selection.GroupShuffleSplit(test_size=.5, n_splits=n_splits, random_state=7)
-split = splitter.split(df, groups=df['Patient'])
+group_kfold = model_selection.GroupKFold(n_splits=n_splits)
 # Make dataset <<<<
 fold = 1
-for train_inds, test_inds in split:
+for train_index, test_index in group_kfold.split(df, groups=df['Patient']):
     print('#'*len("Fold {}/{}".format(fold, n_splits)))
     print("Fold {}/{}".format(fold, n_splits))
     print('#'*len("Fold {}/{}".format(fold, n_splits)))
     checkpoint_filepath = os.path.join(output_dir, "{}_".format(fold) + checkpoint_filename)
-    train = df.iloc[train_inds]
-    test = df.iloc[test_inds]
+
+    train = df.iloc[train_index]
+    test = df.iloc[test_index]
     wsi_file_paths_train = train['Path']
-    wsi_labels_categorical_train = train['Type']
+    wsi_labels_categorical_train = list(train['Type'])
     wsi_labels_numerical_train = [class_dict[label] for label in wsi_labels_categorical_train]
     wsi_file_paths_test = test['Path']
     wsi_labels_categorical_test = test['Type']
@@ -83,10 +83,10 @@ for train_inds, test_inds in split:
     dataset_test = dataset_manager_test.make_dataset(shuffle=False)
 
     for batch_x, batch_y in dataset_train.take(1):
-        fig, ax = plt.subplots(4, 4, figsize=(15, 15))
+        fig, ax = plt.subplots(10, 10, figsize=(30, 30))
         ax = ax.ravel()
         j = 0
-        for image, label in zip(batch_x[:16], batch_y[:16]):
+        for image, label in zip(batch_x[:100], batch_y[:100]):
             label = label.numpy()
             img = image.numpy()
             input_shape = img.shape

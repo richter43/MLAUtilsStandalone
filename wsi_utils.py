@@ -87,6 +87,8 @@ class DatasetManager:
                  labels,
                  tile_size,
                  tile_new_size=None,
+                 num_classes=None,
+                 overlap=1,
                  channels=3,
                  batch_size=32,
                  one_hot=True,
@@ -98,11 +100,15 @@ class DatasetManager:
             self.new_size = tile_size
         self.crop_size = tile_size
         self.one_hot = one_hot
+        self.overlap = overlap
         self.std_threshold = std_threshold
-        self.num_classes = len(set(labels))
+        if num_classes is None:
+            self.num_classes = len(set(labels))
+        else:
+            self.num_classes = num_classes
         self.channels = channels
         self.batch_size = batch_size
-        self.section_manager = SlideManager(tile_size, overlap=1, verbose=verbose)
+        self.section_manager = SlideManager(tile_size, overlap=self.overlap, verbose=verbose)
         self.tile_placeholders = sum([self.section_manager.crop(
             filepath,
             label=label) for filepath, label in zip(filepaths, labels)], [])
@@ -175,12 +181,18 @@ class DatasetManager:
     def get_tile_placeholders(self):
         return self.tile_placeholders
 
+    @property
+    def get_tile_placeholders_filt(self):
+        return list(filter(lambda x: x["std"] > self.std_threshold, self.tile_placeholders))
+
 
 def get_heatmap(tile_placeholders,
                 class_to_map,
-                dir_save,
-                tile_placeholders_mapping_key='predictions',
-                colormap=cm.get_cmap('Blues'), lv=-1):
+                num_classes,
+                level_downsample,
+                tile_placeholders_mapping_key='prediction',
+                colormap=cm.get_cmap('Blues'),
+                lv=0):
 
     """
     Builds a 3 channel map.
@@ -188,9 +200,7 @@ def get_heatmap(tile_placeholders,
     belonging to classes 0-1, the fourth hold the number of crops which contain it.
     """
 
-    slide = openslide.OpenSlide(tile_placeholders['filepath_slide'])
-    level_downsample = 1 / slide.level_downsamples[lv]
-    n_classes = len(set([tile['label'] for tile in tile_placeholders]))
+    slide = openslide.OpenSlide(tile_placeholders[0]['filepath_slide'])
 
     if 'openslide.bounds-width' in slide.properties.keys():
         # Here to consider only the rectangle bounding the non-empty region of the slide, if available.
@@ -206,9 +216,8 @@ def get_heatmap(tile_placeholders,
                       bounds_height)
     else:
         # If bounding box of the non-empty region of the slide is not available
-        size = slide.level_dimensions[lv]
         # Slide dimensions of given level reported to level 0
-        region_lv0 = (0, 0, size[0] / level_downsample, size[1] / level_downsample)
+        region_lv0 = (0, 0, slide.level_dimensions[0][0], slide.level_dimensions[0][1])
 
     region_lv0 = [round(x) for x in region_lv0]
     region_lv_selected = [round(x * level_downsample) for x in region_lv0]
@@ -216,7 +225,7 @@ def get_heatmap(tile_placeholders,
     for tile in tile_placeholders:
         top = math.ceil(tile['top'] * level_downsample)
         left = math.ceil(tile['left'] * level_downsample)
-        side = math.ceil((tile['size'] * slide.level_downsamples[tile['level']]) * level_downsample)
+        side = math.ceil(tile['size'] * level_downsample)
         top -= region_lv_selected[1]
         left -= region_lv_selected[0]
         side_x = side
@@ -228,39 +237,31 @@ def get_heatmap(tile_placeholders,
             side_x += left
             left = 0
         if side_x > 0 and side_y > 0:
-            val = probabilities[top:top + side_y, left:left + side_x, 0:n_classes]
-            probabilities[top:top + side_y, left:left + side_x, 0:n_classes] = val + np.array(
-                tile[tile_placeholders_mapping_key])
-            probabilities[top:top + side_y, left:left + side_x, n_classes] = \
-                probabilities[top:top + side_y, left:left + side_x, n_classes] + 1
+            val = probabilities[top:top + side_y, left:left + side_x, 0:num_classes]
+            probabilities[top:top + side_y, left:left + side_x, 0:num_classes] = val + np.array(
+                tile[tile_placeholders_mapping_key][class_to_map])
+            probabilities[top:top + side_y, left:left + side_x, num_classes] = \
+                probabilities[top:top + side_y, left:left + side_x, num_classes] + 1
 
     # Dividing the first three channels by the fourth, every channel now becomes a probability map.
     # Each value is between 0 and 1 and represents the average of all votes for that pixel.
-    # The map is then converted to uint8 to be saved as an 8bpc image.
-    probabilities = np.divide(probabilities[:, :, 0:n_classes], probabilities[:, :, n_classes:n_classes+1],
-                              where=probabilities[:, :, n_classes:n_classes+1] != 0)
+    # The map is then converted to uint8 to be saved as image.
+    probabilities = np.divide(probabilities[:, :, 0:num_classes], probabilities[:, :, num_classes:num_classes+1],
+                              where=probabilities[:, :, num_classes:num_classes+1] != 0)
     probabilities = probabilities * 255
     probabilities = probabilities.astype('uint8')
 
     map_ = probabilities[:, :, class_to_map]
     map_ = Image.fromarray(map_).filter(ImageFilter.GaussianBlur(3))
     map_ = np.array(map_) / 255
-
-    alpha = Image.fromarray(((map_ + 0.01) * 255 * 1.5).astype('uint8'))
     map_[map_ < 0.5] = 0
-
     map_ = colormap(np.array(map_))
     roi_map = Image.fromarray((map_ * 255).astype('uint8'))
-    roi_map.putalpha(50)
+    roi_map.putalpha(75)
 
-    slide_image = slide.read_region((region_lv0[0], region_lv0[1]), lv,
-                                    (region_lv_selected[2], region_lv_selected[3]))
+    slide_image = slide.get_thumbnail((region_lv_selected[2], region_lv_selected[3]))
+    slide_image = slide_image.convert('RGBA')
     slide_image.alpha_composite(roi_map)
     slide_image.convert('RGBA')
 
-    roi_map.putalpha(alpha)
-    # Compose image and save
-    slide_image.alpha_composite(roi_map)
-    filepath = os.path.join(dir_save, '_heatmap.bmp')
-    print("Heatmap saved at {}".format(filepath))
-    slide_image.save(os.path.join(dir_save))
+    return slide_image
