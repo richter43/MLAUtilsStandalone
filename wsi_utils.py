@@ -190,9 +190,9 @@ def get_heatmap(tile_placeholders,
                 class_to_map,
                 num_classes,
                 level_downsample,
+                threshold=0.5,
                 tile_placeholders_mapping_key='prediction',
-                colormap=cm.get_cmap('Blues'),
-                lv=0):
+                colormap=cm.get_cmap('Blues')):
 
     """
     Builds a 3 channel map.
@@ -237,24 +237,17 @@ def get_heatmap(tile_placeholders,
             side_x += left
             left = 0
         if side_x > 0 and side_y > 0:
-            val = probabilities[top:top + side_y, left:left + side_x, 0:num_classes]
-            probabilities[top:top + side_y, left:left + side_x, 0:num_classes] = val + np.array(
+            probabilities[top:top + side_y, left:left + side_x, 0:num_classes] = np.array(
                 tile[tile_placeholders_mapping_key][class_to_map])
-            probabilities[top:top + side_y, left:left + side_x, num_classes] = \
-                probabilities[top:top + side_y, left:left + side_x, num_classes] + 1
 
-    # Dividing the first three channels by the fourth, every channel now becomes a probability map.
-    # Each value is between 0 and 1 and represents the average of all votes for that pixel.
-    # The map is then converted to uint8 to be saved as image.
-    probabilities = np.divide(probabilities[:, :, 0:num_classes], probabilities[:, :, num_classes:num_classes+1],
-                              where=probabilities[:, :, num_classes:num_classes+1] != 0)
     probabilities = probabilities * 255
     probabilities = probabilities.astype('uint8')
 
     map_ = probabilities[:, :, class_to_map]
     map_ = Image.fromarray(map_).filter(ImageFilter.GaussianBlur(3))
     map_ = np.array(map_) / 255
-    map_[map_ < 0.5] = 0
+    map_[map_ < threshold] = 0
+    segmentation = (map_ * 255).astype('uint8')
     map_ = colormap(np.array(map_))
     roi_map = Image.fromarray((map_ * 255).astype('uint8'))
     roi_map.putalpha(75)
@@ -263,5 +256,5 @@ def get_heatmap(tile_placeholders,
     slide_image = slide_image.convert('RGBA')
     slide_image.alpha_composite(roi_map)
     slide_image.convert('RGBA')
-
-    return slide_image
+    # segmentation[segmentation != 0] = 255
+    return slide_image, segmentation
