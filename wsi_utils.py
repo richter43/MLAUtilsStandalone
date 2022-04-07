@@ -186,6 +186,9 @@ class DatasetManager:
         return list(filter(lambda x: x["std"] > self.std_threshold, self.tile_placeholders))
 
 
+def filt_tile_placeholders(tile_placeholders, threshold):
+        return list(filter(lambda x: x["std"] > threshold, tile_placeholders))
+
 def get_heatmap(tile_placeholders,
                 class_to_map,
                 num_classes,
@@ -237,8 +240,11 @@ def get_heatmap(tile_placeholders,
             side_x += left
             left = 0
         if side_x > 0 and side_y > 0:
-            probabilities[top:top + side_y, left:left + side_x, 0:num_classes] = np.array(
-                tile[tile_placeholders_mapping_key][class_to_map])
+            try:
+                probabilities[top:top + side_y, left:left + side_x, 0:num_classes] = np.array(
+                    tile[tile_placeholders_mapping_key][class_to_map])
+            except KeyError:
+                pass
 
     probabilities = probabilities * 255
     probabilities = probabilities.astype('uint8')

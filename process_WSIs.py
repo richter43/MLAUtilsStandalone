@@ -40,21 +40,23 @@ model = tf.keras.models.load_model(checkpoint_filepath)
 
 j = 1
 for wsi, label in zip(wsi_file_paths_test, wsi_labels_numerical_test):
-    print("Processing {} - {}/{}".format(wsi, j, len(wsi_file_paths_test)))
-    dataset_manager_test = DatasetManager([wsi],
-                                          [label],
-                                          tile_size=tile_size,
-                                          tile_new_size=tile_new_size,
-                                          num_classes=2,
-                                          channels=channels,
-                                          batch_size=batch_size)
-    dataset_test = dataset_manager_test.make_dataset(shuffle=False)
-    preds = model.predict(dataset_test)
-    tile_placeholders = dataset_manager_test.get_tile_placeholders
-    for tile, pred in zip(tile_placeholders, preds):
-        tile['prediction'] = pred
-    filename = os.path.basename(wsi).split('.')[0]
-    filepath = os.path.join(rootdir_wsi, "{}_tile_placeholders.pickle".format(filename))
-    with open(filepath, "wb") as fp:
-        pickle.dump(tile_placeholders, fp)
-    j += 1
+    if os.path.basename(wsi) == "15.svs":
+        j = 15
+        print("Processing {} - {}/{}".format(wsi, j, len(wsi_file_paths_test)))
+        dataset_manager_test = DatasetManager([wsi],
+                                              [label],
+                                              tile_size=tile_size,
+                                              tile_new_size=tile_new_size,
+                                              num_classes=2,
+                                              channels=channels,
+                                              batch_size=batch_size)
+        dataset_test = dataset_manager_test.make_dataset(shuffle=False)
+        preds = model.predict(dataset_test)
+        tile_placeholders = dataset_manager_test.get_tile_placeholders_filt
+        for tile, pred in zip(tile_placeholders, preds):
+            tile['prediction'] = pred
+        filename = os.path.basename(wsi).split('.')[0]
+        filepath = os.path.join(save_dir, "{}_tile_placeholders.pickle".format(filename))
+        with open(filepath, "wb") as fp:
+            pickle.dump(tile_placeholders, fp)
+        j += 1

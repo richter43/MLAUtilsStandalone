@@ -12,7 +12,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = 'true'
 rootdir_wsi = "/space/ponzio/CRC_ROIs_4_classes/"
 rootdir_src = "/space/ponzio/teaching-MLinAPP/src/"
-output_dir = "../models_crc_5-04"
+output_dir = "../models_crc_mc-drop"
 checkpoint_filename = "HvsNH.h5"
 n_splits = 2
 tile_size = 500
@@ -125,12 +125,14 @@ for train_index, test_index in group_kfold.split(df, groups=df['Patient']):
     x = tf.keras.applications.resnet_v2.preprocess_input(inputs)
     for layer in augmentation_block:
         x = layer(x, training=False)
+    x = tf.keras.layers.Dropout(0.3)(x, training=True)
     base_model = tf.keras.applications.ResNet50V2(include_top=False, weights="imagenet")
     for j, layer in enumerate(base_model.layers[:100]):
         layer.trainable = False
     x = base_model(x)
+    x = tf.keras.layers.Dropout(0.3)(x, training=True)
     x = tf.keras.layers.GlobalAveragePooling2D()(x)
-    x = tf.keras.layers.Dropout(0.3)(x)
+    x = tf.keras.layers.Dropout(0.3)(x, training=True)
     x = tf.keras.layers.Dense(num_classes, activation="softmax")(x)
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
     # CNN model <<<<
