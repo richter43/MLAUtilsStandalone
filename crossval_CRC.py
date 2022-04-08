@@ -6,13 +6,14 @@ import tensorflow as tf
 import matplotlib.pyplot as plt
 from wsi_utils import DatasetManager
 from sklearn import model_selection
-
+from utils import seaborn_cm
+from sklearn.metrics import confusion_matrix
 # -------------------------------------------------
-os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = 'true'
 rootdir_wsi = "/space/ponzio/CRC_ROIs_4_classes/"
 rootdir_src = "/space/ponzio/teaching-MLinAPP/src/"
-output_dir = "../models_crc_mc-drop"
+output_dir = "../models_crc_mc-drop_8-04"
 checkpoint_filename = "HvsNH.h5"
 n_splits = 2
 tile_size = 500
@@ -47,9 +48,11 @@ df = pd.DataFrame([os.path.basename(slide).split('.')[0].split('_') for slide in
                                                                                                            "Dysplasia",
                                                                                                            "#-Annotation"])
 df['Path'] = wsi_file_paths
-group_kfold = model_selection.GroupKFold(n_splits=n_splits)
+# df = df.sample(frac=0.05)
+# group_kfold = model_selection.GroupKFold(n_splits=n_splits)
 # Make dataset <<<<
 fold = 1
+group_kfold = model_selection.GroupShuffleSplit(test_size=.4, n_splits=2, random_state=7)
 for train_index, test_index in group_kfold.split(df, groups=df['Patient']):
     print('#'*len("Fold {}/{}".format(fold, n_splits)))
     print("Fold {}/{}".format(fold, n_splits))
@@ -125,14 +128,12 @@ for train_index, test_index in group_kfold.split(df, groups=df['Patient']):
     x = tf.keras.applications.resnet_v2.preprocess_input(inputs)
     for layer in augmentation_block:
         x = layer(x, training=False)
-    x = tf.keras.layers.Dropout(0.3)(x, training=True)
     base_model = tf.keras.applications.ResNet50V2(include_top=False, weights="imagenet")
     for j, layer in enumerate(base_model.layers[:100]):
         layer.trainable = False
     x = base_model(x)
-    x = tf.keras.layers.Dropout(0.3)(x, training=True)
+    x = tf.keras.layers.Dropout(0.5)(x, training=True)
     x = tf.keras.layers.GlobalAveragePooling2D()(x)
-    x = tf.keras.layers.Dropout(0.3)(x, training=True)
     x = tf.keras.layers.Dense(num_classes, activation="softmax")(x)
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
     # CNN model <<<<
@@ -170,8 +171,20 @@ for train_index, test_index in group_kfold.split(df, groups=df['Patient']):
     model.fit(dataset_train, epochs=epochs, callbacks=[checkpoint_callback, lr_callback, early_stop_callback])
     print("Loading {}".format(checkpoint_filepath))
     model = tf.keras.models.load_model(checkpoint_filepath)
-    results = model.evaluate(dataset_test, verbose=0)
-    print("@"*len("Accuracy: {:.2f}".format(results[1])))
-    print("Accuracy: {:.2f}".format(results[1]))
-    print("@" * len("Accuracy: {:.2f}".format(results[1])))
+
+    y_pred = model.predict(dataset_test, batch_size=batch_size)
+    y_pred = np.argmax(y_pred, axis=1)
+    y_true = np.array([tile['label'] for tile in dataset_manager_test.get_tile_placeholders_filt if tile[
+        'std'] > dataset_manager_test.std_threshold])
+    cm = confusion_matrix(y_true, y_pred)
+    mean_acc = np.mean(np.diag(cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]))
+    print("@" * len("Accuracy: {:.2f}".format(mean_acc)))
+    print("Accuracy: {:.2f}".format(mean_acc))
+    print("@" * len("Accuracy: {:.2f}".format(mean_acc)))
+
+    fig, ax = plt.subplots(1, 1, figsize=(5, 5))
+    seaborn_cm(cm, ax, ["H", "NH"])
+    filepath = os.path.join(output_dir, "{}_".format(fold) + "cm.png")
+    fig.savefig(filepath)
+
     fold += 1
