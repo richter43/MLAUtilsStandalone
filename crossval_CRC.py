@@ -13,12 +13,12 @@ os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = 'true'
 rootdir_wsi = "/space/ponzio/CRC_ROIs_4_classes/"
 rootdir_src = "/space/ponzio/teaching-MLinAPP/src/"
-output_dir = "../models_crc_mc-drop_8-04"
+output_dir = "../models_crc_1000x1000"
 checkpoint_filename = "HvsNH.h5"
-n_splits = 2
-tile_size = 500
+n_splits = 3
+tile_size = 1000
 tile_new_size = 112
-overlap = 1
+overlap = 0.5
 epochs = 10
 learning_rate = 0.01
 batch_size = 128
@@ -52,7 +52,7 @@ df['Path'] = wsi_file_paths
 # group_kfold = model_selection.GroupKFold(n_splits=n_splits)
 # Make dataset <<<<
 fold = 1
-group_kfold = model_selection.GroupShuffleSplit(test_size=.4, n_splits=2, random_state=7)
+group_kfold = model_selection.GroupShuffleSplit(test_size=.35, n_splits=n_splits, random_state=7)
 for train_index, test_index in group_kfold.split(df, groups=df['Patient']):
     print('#'*len("Fold {}/{}".format(fold, n_splits)))
     print("Fold {}/{}".format(fold, n_splits))
@@ -61,12 +61,19 @@ for train_index, test_index in group_kfold.split(df, groups=df['Patient']):
 
     train = df.iloc[train_index]
     test = df.iloc[test_index]
+    filepath = os.path.join(output_dir, "{}_".format(fold) + "train.csv")
+    train.to_csv(filepath)
+    filepath = os.path.join(output_dir, "{}_".format(fold) + "test.csv")
+    test.to_csv(filepath)
     wsi_file_paths_train = train['Path']
     wsi_labels_categorical_train = list(train['Type'])
     wsi_labels_numerical_train = [class_dict[label] for label in wsi_labels_categorical_train]
     wsi_file_paths_test = test['Path']
     wsi_labels_categorical_test = test['Type']
     wsi_labels_numerical_test = [class_dict[label] for label in wsi_labels_categorical_test]
+    print("Unique labels in test: {}".format(set(wsi_labels_categorical_test)))
+    print("Unique patients in test: {}".format(set(test['Patient'])))
+    print("Unique patients in train: {}".format(set(train['Patient'])))
 
     dataset_manager_train = DatasetManager(wsi_file_paths_train,
                                            wsi_labels_numerical_train,
@@ -132,7 +139,7 @@ for train_index, test_index in group_kfold.split(df, groups=df['Patient']):
     for j, layer in enumerate(base_model.layers[:100]):
         layer.trainable = False
     x = base_model(x)
-    x = tf.keras.layers.Dropout(0.5)(x, training=True)
+    x = tf.keras.layers.Dropout(0.5)(x, training=False)
     x = tf.keras.layers.GlobalAveragePooling2D()(x)
     x = tf.keras.layers.Dense(num_classes, activation="softmax")(x)
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
