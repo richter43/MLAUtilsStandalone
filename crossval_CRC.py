@@ -13,7 +13,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 os.environ["TF_FORCE_GPU_ALLOW_GROWTH"] = 'true'
 rootdir_wsi = "/space/ponzio/CRC_ROIs_4_classes/"
 rootdir_src = "/space/ponzio/teaching-MLinAPP/src/"
-output_dir = "../models_crc_1000x1000"
+output_dir = "../models_crc_1000x1000_MC-drop"
 checkpoint_filename = "HvsNH.h5"
 n_splits = 3
 tile_size = 1000
@@ -139,7 +139,7 @@ for train_index, test_index in group_kfold.split(df, groups=df['Patient']):
     for j, layer in enumerate(base_model.layers[:100]):
         layer.trainable = False
     x = base_model(x)
-    x = tf.keras.layers.Dropout(0.5)(x, training=False)
+    x = tf.keras.layers.Dropout(0.5)(x, training=True)
     x = tf.keras.layers.GlobalAveragePooling2D()(x)
     x = tf.keras.layers.Dense(num_classes, activation="softmax")(x)
     model = tf.keras.models.Model(inputs=inputs, outputs=x)
