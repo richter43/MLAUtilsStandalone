@@ -52,10 +52,11 @@ class ResnetBlock(tf.keras.layers.Layer):
 
 class ResNet(tf.keras.Model):
 
-    def __init__(self, input_shape, num_classes=10, augment=False):
+    def __init__(self, input_shape, num_classes=10, augment=False, mc_dropout=False):
         super(ResNet, self).__init__()
         self.num_classes = num_classes
         self.augment = augment
+        self.mc_dropout = mc_dropout
         self.input_layer = tf.keras.layers.InputLayer(input_shape)
         self.augmentation_block = [
             tf.keras.layers.Resizing(112, 112),
@@ -90,9 +91,13 @@ class ResNet(tf.keras.Model):
         for layer in self.block_a:
             x = layer(x)
         x = self.block_b(x)
+        x = tf.keras.layers.Dropout(0.25)(x, training=self.mc_dropout)
         x = self.block_c(x)
+        x = tf.keras.layers.Dropout(0.25)(x, training=self.mc_dropout)
         x = self.block_d(x)
+        x = tf.keras.layers.Dropout(0.25)(x, training=self.mc_dropout)
         x = self.block_e(x)
+        x = tf.keras.layers.Dropout(0.25)(x, training=self.mc_dropout)
         x = self.global_pool(x)
-        x = tf.keras.layers.Dropout(0.25)(x)
+        x = tf.keras.layers.Dropout(0.25)(x, training=self.mc_dropout)
         return self.classifier(x)

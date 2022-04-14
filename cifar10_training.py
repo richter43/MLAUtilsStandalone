@@ -199,7 +199,7 @@ def lr_scheduler(epoch, lr):
     return new_lr
 reduce_lr = tf.keras.callbacks.LearningRateScheduler(lr_scheduler)
 
-checkpoint_filepath = './models_cifar/checkpoint_cifar10_lr_red'
+checkpoint_filepath = './models_cifar_mc-drop/checkpoint_cifar10_lr_red'
 model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
     filepath=checkpoint_filepath,
     save_weights_only=True,
@@ -207,7 +207,7 @@ model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
     mode='max',
     save_best_only=True)
 
-net = ResNet(input_shape=(32, 32, 3), augment=True)
+net = ResNet(input_shape=(32, 32, 3), augment=True, mc_dropout=True)
 # net.build((1, 32, 32, 3))
 # net.summary()
 optimizer = tf.keras.optimizers.SGD(learning_rate=0.01, momentum=0.9, nesterov=False)
