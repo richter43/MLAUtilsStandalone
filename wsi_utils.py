@@ -190,6 +190,7 @@ def filt_tile_placeholders(tile_placeholders, threshold):
         return list(filter(lambda x: x["std"] > threshold, tile_placeholders))
 
 def get_heatmap(tile_placeholders,
+                filepath_slide,
                 class_to_map,
                 num_classes,
                 level_downsample,
@@ -203,7 +204,7 @@ def get_heatmap(tile_placeholders,
     belonging to classes 0-1, the fourth hold the number of crops which contain it.
     """
 
-    slide = openslide.OpenSlide(tile_placeholders[0]['filepath_slide'])
+    slide = openslide.OpenSlide(filepath_slide)
 
     if 'openslide.bounds-width' in slide.properties.keys():
         # Here to consider only the rectangle bounding the non-empty region of the slide, if available.
