@@ -39,6 +39,9 @@ wsi_file_paths_test = glob(os.path.join(rootdir_wsi, '*.svs'))
 wsi_labels_numerical_test = [0]*len(wsi_file_paths_test)
 
 model = tf.keras.models.load_model(checkpoint_filepath)
+from TTAWrapper import TTAWrapper
+model = TTAWrapper(model, input_shape=(tile_new_size, tile_new_size, 3))
+
 
 j = 1
 for wsi, label in zip(wsi_file_paths_test, wsi_labels_numerical_test):
