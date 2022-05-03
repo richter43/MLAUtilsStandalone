@@ -1,8 +1,10 @@
 import cv2
 import numpy as np
+from matplotlib import cm
 import xml.etree.ElementTree as ET
 from shapely.strtree import STRtree
 from shapely.geometry import Polygon
+from PIL import Image
 
 
 def get_points_base(xml_file, colors_to_use, custom_colors=[]):
@@ -140,3 +142,34 @@ def get_annotation_mask(xml_file,
             cv2.fillPoly(mask, [np.asarray(pointSet).reshape((-1, 1, 2))], map_idx[annCount])
     mask[mask!=0] = 255
     return mask
+
+
+def overlap(slide, mask, level_downsample,colormap=cm.get_cmap('Blues')):
+
+    if 'openslide.bounds-width' in slide.properties.keys():
+        # Here to consider only the rectangle bounding the non-empty region of the slide, if available.
+        # These properties are in the level 0 reference frame.
+        bounds_width = int(slide.properties['openslide.bounds-width'])
+        bounds_height = int(slide.properties['openslide.bounds-height'])
+        bounds_x = int(slide.properties['openslide.bounds-x'])
+        bounds_y = int(slide.properties['openslide.bounds-y'])
+
+        region_lv0 = (bounds_x,
+                      bounds_y,
+                      bounds_width,
+                      bounds_height)
+    else:
+        # If bounding box of the non-empty region of the slide is not available
+        # Slide dimensions of given level reported to level 0
+        region_lv0 = (0, 0, slide.level_dimensions[0][0], slide.level_dimensions[0][1])
+
+    region_lv0 = [round(x) for x in region_lv0]
+    region_lv_selected = [round(x * level_downsample) for x in region_lv0]
+    slide_image = slide.get_thumbnail((region_lv_selected[2], region_lv_selected[3]))
+    map_ = colormap(mask)
+    roi_map = Image.fromarray((map_ * 255).astype('uint8'))
+    roi_map.putalpha(75)
+    slide_image = slide_image.convert('RGBA')
+    slide_image.alpha_composite(roi_map)
+    slide_image.convert('RGBA')
+    return slide_image
