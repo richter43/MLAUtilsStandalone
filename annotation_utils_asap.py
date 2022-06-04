@@ -1,7 +1,11 @@
+import sys
+sys.path.append("/usr/local/bin")
+
 from typing import Dict, List, Tuple, Union
 
 import cv2
 import matplotlib.pyplot as plt
+# Make sure to add mir's location to PYTHONPATH (ASAP's directory)
 import multiresolutionimageinterface as mir
 import numpy as np
 from matplotlib import cm
@@ -11,8 +15,7 @@ from shapely.geometry import Polygon
 
 from .annotation_utils_dataclasses import AnnotationData, PointInfo
 
-
-def get_region_lv0(slide: OpenSlide) -> Tuple[int, int, int, int]:
+def get_region_lv0(slide: OpenSlide) -> Tuple[Tuple[int, int], Tuple[int, int, int, int]]:
 
     if 'openslide.bounds-width' in slide.properties.keys():
         # Here to consider only the rectangle bounding the non-empty region of the slide, if available.
@@ -26,13 +29,16 @@ def get_region_lv0(slide: OpenSlide) -> Tuple[int, int, int, int]:
                       bounds_y,
                       bounds_width,
                       bounds_height)
+        
+        coords = (bounds_x, bounds_y)
 
     else:
         # If bounding box of the non-empty region of the slide is not available
         # Slide dimensions of given level reported to level 0
+        coords = (0,0)
         region_lv0 = (0, 0, slide.level_dimensions[0][0], slide.level_dimensions[0][1])
 
-    return region_lv0
+    return coords, region_lv0
 
 def get_points_base_asap(xml_file: str) -> PointInfo:
     
@@ -69,7 +75,7 @@ def get_annotation_mask_asap(xml_file: str, slide: OpenSlide, level_downsample: 
 
     """Returns the mask of a tile"""
     
-    region_lv0 = get_region_lv0(slide)
+    coords, region_lv0 = get_region_lv0(slide)
     region_lv0 = [round(x) for x in region_lv0]
     region_lv_selected = [round(x * level_downsample) for x in region_lv0]
 
@@ -111,7 +117,7 @@ def get_thumbnail_offset(slide: OpenSlide, size: Tuple[int, int]):
 
 def overlap_asap(slide: OpenSlide, mask: np.array, level_downsample: float, colormap=cm.get_cmap('Blues')) -> Image:
 
-    region_lv0 = get_region_lv0(slide)
+    coords, region_lv0 = get_region_lv0(slide)
     region_lv0 = [round(x) for x in region_lv0]
     region_lv_selected = [round(x * level_downsample) for x in region_lv0]
 
@@ -123,6 +129,7 @@ def overlap_asap(slide: OpenSlide, mask: np.array, level_downsample: float, colo
         slide_image = slide.get_thumbnail(downscaled_size)
     
     map_ = colormap(mask)
+    #TODO: I feel like the resizing of the image is too crude
     roi_map = Image.fromarray((map_ * 255).astype('uint8')).resize(slide_image.size)
     roi_map.putalpha(75)
     slide_image = slide_image.convert('RGBA')
