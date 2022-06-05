@@ -1,5 +1,5 @@
 import sys
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple, Union, Optional
 import os
 
 import cv2
@@ -52,7 +52,33 @@ def get_points_base_asap(xml_file: str) -> PointInfo:
 
     return PointInfo(ann_list)
 
-def get_points_xml_asap(xml_file: str) -> List[AnnotationData]:
+def get_annotationdata_list(annotation_list: mir.AnnotationList, selected_group: Optional[str]) -> List[AnnotationData]:
+
+    groups = [group.getName() for group in annotation_list.getGroups()]
+
+    if selected_group is not None:
+        assert selected_group in groups
+
+    ann_list: List[AnnotationData] = []
+
+    for annotation in annotation_list.getAnnotations():
+
+        group_name = annotation.getGroup().getName()
+
+        if group_name is not None and group_name != selected_group:
+            continue
+
+        points_annotation = []
+        for coordinate in annotation.getCoordinates():
+            points_annotation.append((coordinate.getX(), coordinate.getY()))
+
+        name = annotation.getName()
+        new_ann = AnnotationData(name=name, group_name=group_name, points=points_annotation)    
+        ann_list.append(new_ann)
+
+    return ann_list
+
+def get_points_xml_asap(xml_file: str, selected_group: Optional[str] = None) -> List[AnnotationData]:
 
     #Memory space in which annotations will be kept at
     annotation_list = mir.AnnotationList()
@@ -62,22 +88,9 @@ def get_points_xml_asap(xml_file: str) -> List[AnnotationData]:
     xml_repository.setSource(xml_file)
     xml_repository.load()
 
-    # groups = [group.getName() for group in annotation_list.getGroups()]
+    return get_annotationdata_list(annotation_list, selected_group)
 
-    ann_list: List[AnnotationData] = []
-
-    for annotation in annotation_list.getAnnotations():
-        points_annotation = []
-        for coordinate in annotation.getCoordinates():
-            points_annotation.append((coordinate.getX(), coordinate.getY()))
-
-        name = annotation.getName()
-        new_ann = AnnotationData(name=name, points=points_annotation)    
-        ann_list.append(new_ann)
-
-    return ann_list
-
-def get_annotation_mask_asap(xml_file: str, slide: OpenSlide, level_downsample: float):
+def get_annotation_mask_asap(xml_file: str, slide: OpenSlide, level_downsample: float) -> np.array:
 
     """Returns the mask of a tile"""
     

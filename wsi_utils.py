@@ -5,7 +5,10 @@ import numpy as np
 import tensorflow as tf
 from matplotlib import cm
 from PIL import Image, ImageFilter
-from .annotation_utils_asap import get_region_lv0
+from .annotation_utils_asap import get_region_lv0, get_points_xml_asap
+from .wsi_utils_dataclasses import SlideMetadata, Section
+from .annotation_utils_dataclasses import PointInfo
+import matplotlib.pyplot as plt
 from typing import Optional, List
 
 class SlideManager:
@@ -18,31 +21,31 @@ class SlideManager:
         self.level = 0
         self.overlap = int(1/overlap)
         self.verbose = verbose
+        self.__sections: List[Section]= []
 
-    # Encapsulating dunder doesn't seem to fit the use case here.
+    # The usage of an encapsulating dunder doesn't seem to fit the use case here.
     def __generate_sections(self,
-                             x_start,
-                             y_start,
-                             width,
-                             height,
-                             downsample_factor,
-                             filepath):
+                             x_start: int,
+                             y_start: int,
+                             width: int,
+                             height: int,
+                             downsample_factor: float,
+                             filepath: str):
         side = self.tile_size
         step = side // self.overlap
-        # Encapsulating dunder doesn't seem to fit the use case here.
+        # The usage of an encapsulating dunder doesn't seem to fit the use case here.
         self.__sections = []
 
         n_tiles = 0
         # N.B. Tiles are considered in the 0 level
+        #TODO: There's no real need to pre-compute all of the boxes, an index should suffice to map from box to position 
         for y in range(0, height, step):
             for x in range(0, width, step):
                 # x * step + side is right margin of the given tile
                 if x + side > width or y + side > height:
                     continue
                 n_tiles += 1
-                self.__sections.append(
-                    {'top': y_start + y, 'left': x_start + x,
-                     'size': math.floor(side / downsample_factor)})
+                self.__sections.append(Section(top_coord=x_start + x, left_coord= y_start + y, size=side // downsample_factor, level=self.level))
         if self.verbose:
             print("-"*len("{} stats:".format(filepath)))
             print("{} stats:".format(filepath))
@@ -55,9 +58,18 @@ class SlideManager:
             print("# of tiles:{}".format(n_tiles))
             print("-" * len("{} stats:".format(filepath)))
 
-    def crop(self, filepath_slide, label=None):
-        self.level = 0
-        slide = openslide.OpenSlide(filepath_slide)
+    def crop(self, slide_metadata: SlideMetadata, label=None) -> List[Section]:
+        """Crops 
+
+        Args:
+            slide_metadata (SlideMetadata): _description_
+            label (_type_, optional): _description_. Defaults to None.
+
+        Returns:
+            List[Section]: _description_
+        """
+
+        slide = openslide.OpenSlide(slide_metadata.wsi_path)
         downsample = slide.level_downsamples[self.level]
 
         _ , (bounds_x, bounds_y, bounds_width, bounds_height) = get_region_lv0(slide)
@@ -67,49 +79,70 @@ class SlideManager:
                                   bounds_width,
                                   bounds_height,
                                   downsample,
-                                  filepath_slide)
-        indexes = self.__sections
-        for index in indexes:
-            index['filepath_slide'] = filepath_slide
-            index['level'] = self.level
-            index['label'] = label
-        return indexes
+                                  slide_metadata.wsi_path)
+
+        if slide_metadata.xml_path is not None:
+            point_info = PointInfo(get_points_xml_asap(slide_metadata.xml_path, "tumor"))
+
+        plt.plot(*point_info.ann_list[0].polygon.exterior.xy)
+
+        for index in self.__sections:
+            index.wsi_path = slide_metadata.wsi_path    
+
+            # Assigns label depending on the 
+            if slide_metadata.xml_path is not None:
+                square = index.create_square_polygon()
+                intercepting_polygons = point_info.strtree.query(square)
+
+                label = "none"
+                for poly in intercepting_polygons:
+                    if poly.intersection(square).area / square.area >= 0.5:
+                        label = point_info.get_label_of_polygon(poly)
+                        break
+                    
+            index.label = label
+
+        return self.__sections
+        
 
 
 class DatasetManager:
     def __init__(self,
-                 filepaths: List[str], #Check
-                 labels: List[str], #Check
+                 inputs: List[SlideMetadata],
                  tile_size: int,
-                 tile_new_size: Optional[int] = None,
-                 num_classes: Optional[int] = None,
-                 overlap: int = 1,
+                 overlap: float = 1.0,
                  channels: int = 3,
                  batch_size: int = 32,
                  one_hot: bool = True,
                  std_threshold: int = 20,
                  verbose: bool = False):
+        """_summary_
 
-        if tile_new_size:
-            self.new_size = tile_new_size
-        else:
-            self.new_size = tile_size
+        Args:
+            inputs (List[SlideMetadata]): List of onjects that contain information about the location of the slide, annotation or any other metadata
+            tile_size (int): Resulting image will be tile_size x tile_size
+            overlap (float, optional): Ratio of which images will be overlapped between each other. Defaults to 1.0 .
+            channels (int, optional): Number of channels of the image. Defaults to 3.
+            batch_size (int, optional): Batch size of the dataset. Defaults to 32.
+            one_hot (bool, optional): Encoded to one hot. Defaults to True.
+            std_threshold (int, optional): _description_. Defaults to 20.
+            verbose (bool, optional): Prints further information about the execution. Defaults to False.
+        """
+
+        # WARNING: HASN'T YET BEEN COMPLETELY ADAPTED FOR USAGE WITH NEW SLIDEMANAGER
+
         self.crop_size = tile_size
         self.one_hot = one_hot
         self.overlap = overlap
         self.std_threshold = std_threshold
-        # Why would we have to explicitly pass the number of classes? That info is imbued in the list of labels
-        if num_classes is None:
-            # Why would the list of classes contain repeated elements? This passage seems weird
-            self.num_classes = len(set(labels))
-        else:
-            self.num_classes = num_classes
+        self.num_classes = len(set([val.label for val in inputs]))
         self.channels = channels
         self.batch_size = batch_size
         self.section_manager = SlideManager(tile_size, overlap=self.overlap, verbose=verbose)
-        self.tile_placeholders = sum([self.section_manager.crop(
-            filepath,
-            label=label) for filepath, label in zip(filepaths, labels)], [])
+        # self.tile_placeholders = sum([self.section_manager.crop(
+        #     filepath,
+        #     label=label) for filepath, label in zip(filepaths, labels)], [])
+        self.tile_placeholders = [self.section_manager.crop(slide_metadata) for slide_metadata in inputs]
         print("*"*len("Found in total {} tiles.".format(len(self.tile_placeholders))))
         print("Found in total:\n {} tiles\n belonging to {} slides".format(len(self.tile_placeholders),
                                                                            len(filepaths)))
@@ -123,7 +156,7 @@ class DatasetManager:
                                        [self.tile_placeholders[x.numpy()]['size'],
                                         self.tile_placeholders[x.numpy()]['size']])
         pil_object = pil_object.convert('RGB')
-        pil_object = pil_object.resize(size=(self.new_size, self.new_size))
+        pil_object = pil_object.resize(size=(self.crop_size, self.crop_size))
         self.tile_placeholders[x.numpy()]['std'] = np.std(np.array(pil_object))
         label = self.tile_placeholders[x.numpy()]['label']
         im_size = pil_object.size
@@ -148,12 +181,12 @@ class DatasetManager:
     def _fixup_shape(self, image, label):
         """
         Tensor.shape is determined at graph build time (tf.shape(tensor) gets you the runtime shape).
-        In tf.numpy_function/tf.py_function “don’t build a graph for this part, just run it in python”.
+        In tf.numpy_function/tf.py_function “don't build a graph for this part, just run it in python”.
         So none of the code in such functions runs during graph building, and TensorFlow does not know the shape in there.
         With the function _fixup_shape we set the shape of the tensors.
         """
-        image.set_shape([self.new_size,
-                         self.new_size,
+        image.set_shape([self.crop_size,
+                         self.crop_size,
                          self.channels])
         if self.one_hot:
             label.set_shape([self.num_classes])
