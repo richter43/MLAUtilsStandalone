@@ -5,10 +5,11 @@ import numpy as np
 import tensorflow as tf
 from matplotlib import cm
 from PIL import Image, ImageFilter
-
+from .annotation_utils_asap import get_region_lv0
+from typing import Optional, List
 
 class SlideManager:
-    def __init__(self, tile_size, overlap=1, verbose=0):
+    def __init__(self, tile_size: int, overlap: bool = True, verbose: bool = False):
         """
         # SlideManager provides an easy way to generate a cropList object.
         # This object is not tied to a particular slide and can be reused to crop many slides using the same settings.
@@ -18,7 +19,8 @@ class SlideManager:
         self.overlap = int(1/overlap)
         self.verbose = verbose
 
-    def __generateSections__(self,
+    # Encapsulating dunder doesn't seem to fit the use case here.
+    def __generate_sections(self,
                              x_start,
                              y_start,
                              width,
@@ -26,19 +28,20 @@ class SlideManager:
                              downsample_factor,
                              filepath):
         side = self.tile_size
-        step = int(side / self.overlap)
-        self.__sections__ = []
+        step = side // self.overlap
+        # Encapsulating dunder doesn't seem to fit the use case here.
+        self.__sections = []
 
         n_tiles = 0
         # N.B. Tiles are considered in the 0 level
-        for y in range(int(math.floor(height / step))):
-            for x in range(int(math.floor(width / step))):
+        for y in range(0, height, step):
+            for x in range(0, width, step):
                 # x * step + side is right margin of the given tile
-                if x * step + side > width or y * step + side > height:
+                if x + side > width or y + side > height:
                     continue
                 n_tiles += 1
-                self.__sections__.append(
-                    {'top': y_start + step * y, 'left': x_start + step * x,
+                self.__sections.append(
+                    {'top': y_start + y, 'left': x_start + x,
                      'size': math.floor(side / downsample_factor)})
         if self.verbose:
             print("-"*len("{} stats:".format(filepath)))
@@ -56,24 +59,16 @@ class SlideManager:
         self.level = 0
         slide = openslide.OpenSlide(filepath_slide)
         downsample = slide.level_downsamples[self.level]
-        if 'openslide.bounds-width' in slide.properties.keys():
-            bounds_width = int(slide.properties['openslide.bounds-width'])
-            bounds_height = int(slide.properties['openslide.bounds-height'])
-            bounds_x = int(slide.properties['openslide.bounds-x'])
-            bounds_y = int(slide.properties['openslide.bounds-y'])
-        else:
-            bounds_width = slide.dimensions[0]
-            bounds_height = slide.dimensions[1]
-            bounds_x = 0
-            bounds_y = 0
 
-        self.__generateSections__(bounds_x,
+        _ , (bounds_x, bounds_y, bounds_width, bounds_height) = get_region_lv0(slide)
+
+        self.__generate_sections(bounds_x,
                                   bounds_y,
                                   bounds_width,
                                   bounds_height,
                                   downsample,
                                   filepath_slide)
-        indexes = self.__sections__
+        indexes = self.__sections
         for index in indexes:
             index['filepath_slide'] = filepath_slide
             index['level'] = self.level
@@ -83,17 +78,18 @@ class SlideManager:
 
 class DatasetManager:
     def __init__(self,
-                 filepaths,
-                 labels,
-                 tile_size,
-                 tile_new_size=None,
-                 num_classes=None,
-                 overlap=1,
-                 channels=3,
-                 batch_size=32,
-                 one_hot=True,
-                 std_threshold=20,
-                 verbose=0):
+                 filepaths: List[str], #Check
+                 labels: List[str], #Check
+                 tile_size: int,
+                 tile_new_size: Optional[int] = None,
+                 num_classes: Optional[int] = None,
+                 overlap: int = 1,
+                 channels: int = 3,
+                 batch_size: int = 32,
+                 one_hot: bool = True,
+                 std_threshold: int = 20,
+                 verbose: bool = False):
+
         if tile_new_size:
             self.new_size = tile_new_size
         else:
@@ -102,7 +98,9 @@ class DatasetManager:
         self.one_hot = one_hot
         self.overlap = overlap
         self.std_threshold = std_threshold
+        # Why would we have to explicitly pass the number of classes? That info is imbued in the list of labels
         if num_classes is None:
+            # Why would the list of classes contain repeated elements? This passage seems weird
             self.num_classes = len(set(labels))
         else:
             self.num_classes = num_classes
@@ -190,12 +188,12 @@ def filt_tile_placeholders(tile_placeholders, threshold):
         return list(filter(lambda x: x["std"] > threshold, tile_placeholders))
 
 def get_heatmap(tile_placeholders,
-                slide,
+                slide : openslide.OpenSlide,
                 class_to_map,
                 num_classes,
                 level_downsample,
-                threshold=0.5,
-                tile_placeholders_mapping_key='prediction',
+                threshold : float = 0.5,
+                tile_placeholders_mapping_key : str = 'prediction',
                 colormap=cm.get_cmap('Blues')):
 
     """
@@ -204,22 +202,7 @@ def get_heatmap(tile_placeholders,
     belonging to classes 0-1, the fourth hold the number of crops which contain it.
     """
 
-    if 'openslide.bounds-width' in slide.properties.keys():
-        # Here to consider only the rectangle bounding the non-empty region of the slide, if available.
-        # These properties are in the level 0 reference frame.
-        bounds_width = int(slide.properties['openslide.bounds-width'])
-        bounds_height = int(slide.properties['openslide.bounds-height'])
-        bounds_x = int(slide.properties['openslide.bounds-x'])
-        bounds_y = int(slide.properties['openslide.bounds-y'])
-
-        region_lv0 = (bounds_x,
-                      bounds_y,
-                      bounds_width,
-                      bounds_height)
-    else:
-        # If bounding box of the non-empty region of the slide is not available
-        # Slide dimensions of given level reported to level 0
-        region_lv0 = (0, 0, slide.level_dimensions[0][0], slide.level_dimensions[0][1])
+    _ , region_lv0 = get_region_lv0(slide)
 
     region_lv0 = [round(x) for x in region_lv0]
     region_lv_selected = [round(x * level_downsample) for x in region_lv0]

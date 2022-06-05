@@ -7,8 +7,11 @@ from shapely.geometry import Polygon
 from PIL import Image
 
 
-def get_points_base(xml_file, colors_to_use, custom_colors=[]):
-    color_key = ''.join([k for k in colors_to_use])
+def get_points_base(xml_file: str, colors_to_use: Union[str, List[str]], custom_colors: List[Tuple[int, int, str]] = []):
+
+    # Seemingly unused, uncomment if relevant in the future
+    # color_key = ''.join([k for k in colors_to_use])
+    
     points, map_idx = get_points_xml(xml_file,
                                      colors_to_use,
                                      custom_colors)
@@ -37,6 +40,7 @@ def color_ref_match_xml(colors_to_use, custom_colors):
         color_map = color_ref
 
     return color_map
+
 
 
 def get_points_xml(xml_file, colors_to_use, custom_colors):

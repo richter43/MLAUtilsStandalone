@@ -1,12 +1,11 @@
 import sys
-sys.path.append("/usr/local/bin")
-
 from typing import Dict, List, Tuple, Union
+import os
 
 import cv2
 import matplotlib.pyplot as plt
 # Make sure to add mir's location to PYTHONPATH (ASAP's directory)
-import multiresolutionimageinterface as mir
+import json
 import numpy as np
 from matplotlib import cm
 from openslide import PROPERTY_NAME_BACKGROUND_COLOR, OpenSlide
@@ -14,6 +13,13 @@ from PIL import Image
 from shapely.geometry import Polygon
 
 from .annotation_utils_dataclasses import AnnotationData, PointInfo
+
+module_dir = os.path.dirname(__file__)
+with open(os.path.join(module_dir, "settings.json")) as f:
+    open_json = json.load(f)
+    sys.path.append(open_json["ASAP_PATH"])
+
+import multiresolutionimageinterface as mir
 
 def get_region_lv0(slide: OpenSlide) -> Tuple[Tuple[int, int], Tuple[int, int, int, int]]:
 
