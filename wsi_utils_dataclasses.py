@@ -12,15 +12,16 @@ class SlideMetadata:
 
 @dataclass
 class Section:
-    top_coord: int
-    left_coord: int
+    x: int
+    y: int
     size: int
     level: int
     wsi_path: str = field(init=False)
     label: str = field(init=False)
+    std: float = field(init=False)
     
     def create_square_polygon(self) -> Polygon:
     
-        points = [(self.top_coord, self.left_coord), (self.top_coord, self.left_coord  + self.size), (self.top_coord + self.size, self.left_coord + self.size), (self.top_coord + self.size, self.left_coord)]
+        points = [(self.x, self.y), (self.x, self.y  + self.size), (self.x + self.size, self.y + self.size), (self.x + self.size, self.y)]
 
         return Polygon(points)

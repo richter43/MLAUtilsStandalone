@@ -2,6 +2,7 @@ import numpy as np
 import seaborn as sns
 from matplotlib import cm as plt_cmap
 from shapely.geometry import Polygon
+from .ancillary_definitions import RenalCancerType
 
 def seaborn_cm(cm, ax, tick_labels, fontsize=14):
 
@@ -23,3 +24,16 @@ def seaborn_cm(cm, ax, tick_labels, fontsize=14):
                 yticklabels=tick_labels)
     ax.set_yticklabels(ax.get_yticklabels(), size=fontsize, rotation=45)
     ax.set_xticklabels(ax.get_xticklabels(), size=fontsize, rotation=45)
+
+def get_label_from_path(path: str):
+
+    norm_path = path.lower()
+
+    if 'onco' in norm_path:
+        return RenalCancerType.ONCOCYTOMA.value
+    elif 'chromo' in norm_path:
+        return RenalCancerType.CHROMOPHOBE.value
+    elif 'prcc' in norm_path:
+        return RenalCancerType.PAPILLARY.value
+    else:
+        return RenalCancerType.CLEAR_CELL.value

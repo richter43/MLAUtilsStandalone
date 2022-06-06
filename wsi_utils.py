@@ -8,6 +8,7 @@ from PIL import Image, ImageFilter
 from .annotation_utils_asap import get_region_lv0, get_points_xml_asap
 from .wsi_utils_dataclasses import SlideMetadata, Section
 from .annotation_utils_dataclasses import PointInfo
+from .ancillary_definitions import RenalCancerType
 import matplotlib.pyplot as plt
 from typing import Optional, List
 
@@ -45,7 +46,7 @@ class SlideManager:
                 if x + side > width or y + side > height:
                     continue
                 n_tiles += 1
-                self.__sections.append(Section(top_coord=x_start + x, left_coord= y_start + y, size=side // downsample_factor, level=self.level))
+                self.__sections.append(Section(x=x_start + x, y= y_start + y, size=int(side // downsample_factor), level=self.level))
         if self.verbose:
             print("-"*len("{} stats:".format(filepath)))
             print("{} stats:".format(filepath))
@@ -58,7 +59,7 @@ class SlideManager:
             print("# of tiles:{}".format(n_tiles))
             print("-" * len("{} stats:".format(filepath)))
 
-    def crop(self, slide_metadata: SlideMetadata, label=None) -> List[Section]:
+    def crop(self, slide_metadata: SlideMetadata) -> List[Section]:
         """Crops 
 
         Args:
@@ -84,27 +85,23 @@ class SlideManager:
         if slide_metadata.xml_path is not None:
             point_info = PointInfo(get_points_xml_asap(slide_metadata.xml_path, "tumor"))
 
-        plt.plot(*point_info.ann_list[0].polygon.exterior.xy)
-
         for index in self.__sections:
             index.wsi_path = slide_metadata.wsi_path    
 
-            # Assigns label depending on the 
+            # Assigns label depending on the intersection of the image with the annotation
             if slide_metadata.xml_path is not None:
                 square = index.create_square_polygon()
                 intercepting_polygons = point_info.strtree.query(square)
 
-                label = "none"
+                label = RenalCancerType.NOT_CANCER.value
                 for poly in intercepting_polygons:
-                    if poly.intersection(square).area / square.area >= 0.5:
-                        label = point_info.get_label_of_polygon(poly)
+                    if poly.intersection(square).area / square.area >= 0.5 and point_info.get_label_of_polygon(poly) == "tumor":
+                        label = slide_metadata.label
                         break
                     
             index.label = label
 
         return self.__sections
-        
-
 
 class DatasetManager:
     def __init__(self,
@@ -119,7 +116,7 @@ class DatasetManager:
         """_summary_
 
         Args:
-            inputs (List[SlideMetadata]): List of onjects that contain information about the location of the slide, annotation or any other metadata
+            inputs (List[SlideMetadata]): List of objects that contain information about the location of the slide, annotation or any other metadata
             tile_size (int): Resulting image will be tile_size x tile_size
             overlap (float, optional): Ratio of which images will be overlapped between each other. Defaults to 1.0 .
             channels (int, optional): Number of channels of the image. Defaults to 3.
@@ -129,39 +126,36 @@ class DatasetManager:
             verbose (bool, optional): Prints further information about the execution. Defaults to False.
         """
 
-        # WARNING: HASN'T YET BEEN COMPLETELY ADAPTED FOR USAGE WITH NEW SLIDEMANAGER
-
         self.crop_size = tile_size
         self.one_hot = one_hot
         self.overlap = overlap
         self.std_threshold = std_threshold
-        self.num_classes = len(set([val.label for val in inputs]))
+        self.num_classes = len(RenalCancerType)
         self.channels = channels
         self.batch_size = batch_size
         self.section_manager = SlideManager(tile_size, overlap=self.overlap, verbose=verbose)
-        # self.tile_placeholders = sum([self.section_manager.crop(
-        #     filepath,
-        #     label=label) for filepath, label in zip(filepaths, labels)], [])
-        self.tile_placeholders = [self.section_manager.crop(slide_metadata) for slide_metadata in inputs]
+        self.tile_placeholders = [crop for slide_metadata in inputs for crop in self.section_manager.crop(slide_metadata)]
+
         print("*"*len("Found in total {} tiles.".format(len(self.tile_placeholders))))
         print("Found in total:\n {} tiles\n belonging to {} slides".format(len(self.tile_placeholders),
-                                                                           len(filepaths)))
+                                                                           len(inputs)))
         print("*" * len("Found in total {} tiles.".format(len(self.tile_placeholders))))
 
     def _to_image(self, x):
-        slide = openslide.OpenSlide(self.tile_placeholders[x.numpy()]['filepath_slide'])
-        pil_object = slide.read_region([self.tile_placeholders[x.numpy()]['left'],
-                                        self.tile_placeholders[x.numpy()]['top']],
-                                       self.tile_placeholders[x.numpy()]['level'],
-                                       [self.tile_placeholders[x.numpy()]['size'],
-                                        self.tile_placeholders[x.numpy()]['size']])
+
+        slide = openslide.OpenSlide(self.tile_placeholders[x].wsi_path)
+        pil_object = slide.read_region([self.tile_placeholders[x].x,
+                                        self.tile_placeholders[x].y],
+                                       self.tile_placeholders[x].level,
+                                       [self.tile_placeholders[x].size,
+                                        self.tile_placeholders[x].size])
         pil_object = pil_object.convert('RGB')
         pil_object = pil_object.resize(size=(self.crop_size, self.crop_size))
-        self.tile_placeholders[x.numpy()]['std'] = np.std(np.array(pil_object))
-        label = self.tile_placeholders[x.numpy()]['label']
+        self.tile_placeholders[x].std = np.std(np.array(pil_object))
+        label = self.tile_placeholders[x].label
         im_size = pil_object.size
         img = tf.reshape(tf.cast(pil_object.getdata(), dtype=tf.uint8), (im_size[0], im_size[1], 3))
-        if self.tile_placeholders[x.numpy()]['std'] > self.std_threshold:
+        if self.tile_placeholders[x].std > self.std_threshold:
             return tf.image.convert_image_dtype(img, dtype=tf.float32), tf.cast(label, tf.float32)
         else:
             return tf.image.convert_image_dtype(img, dtype=tf.float32), tf.cast(-1, tf.float32)
@@ -175,10 +169,10 @@ class DatasetManager:
     def _to_one_hot(self, image, label):
         return image, tf.cast(tf.one_hot(tf.cast(label, tf.int32),
                                          self.num_classes,
-                                         name='label', axis=-1),
+                                         name='label'),
                               tf.float32)
 
-    def _fixup_shape(self, image, label):
+    def _fixup_shape(self, image: tf.Tensor, label: tf.Tensor):
         """
         Tensor.shape is determined at graph build time (tf.shape(tensor) gets you the runtime shape).
         In tf.numpy_function/tf.py_function “don't build a graph for this part, just run it in python”.
@@ -195,6 +189,9 @@ class DatasetManager:
         return image, label
 
     def make_dataset(self, shuffle=True):
+
+        self._to_image(1)
+
         dataset = tf.data.Dataset.from_tensor_slices([i for i in range(len(self.tile_placeholders))])
         if shuffle:
             dataset = dataset.shuffle(50000)
@@ -214,11 +211,11 @@ class DatasetManager:
 
     @property
     def get_tile_placeholders_filt(self):
-        return list(filter(lambda x: x["std"] > self.std_threshold, self.tile_placeholders))
+        return list(filter(lambda x: x.std > self.std_threshold, self.tile_placeholders))
 
 
 def filt_tile_placeholders(tile_placeholders, threshold):
-        return list(filter(lambda x: x["std"] > threshold, tile_placeholders))
+        return list(filter(lambda x: x.std > threshold, tile_placeholders))
 
 def get_heatmap(tile_placeholders,
                 slide : openslide.OpenSlide,
