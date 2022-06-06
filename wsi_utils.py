@@ -1,16 +1,145 @@
-import os
 import math
-import openslide
+import os
+from typing import List, Optional
+
+import threading
+import matplotlib.pyplot as plt
 import numpy as np
+import openslide
 import tensorflow as tf
+import torch
+import torch.nn.functional as F
 from matplotlib import cm
 from PIL import Image, ImageFilter
-from .annotation_utils_asap import get_region_lv0, get_points_xml_asap
-from .wsi_utils_dataclasses import SlideMetadata, Section
-from .annotation_utils_dataclasses import PointInfo
+from torch.utils.data import Dataset
+from torchvision import transforms
+import time
+
 from .ancillary_definitions import RenalCancerType
-import matplotlib.pyplot as plt
-from typing import Optional, List
+from .annotation_utils_asap import get_points_xml_asap, get_region_lv0
+from .annotation_utils_dataclasses import PointInfo
+from .wsi_utils_dataclasses import Section, SlideMetadata
+
+
+class WSIDatasetTorch(Dataset):
+
+    def __init__(self, section_list: List[Section], crop_size: int, std_threshold: float, one_hot: bool = True, remove_white: bool = True):
+        super(WSIDatasetTorch, self).__init__()
+        self.section_list : List[Section] = section_list
+        self.crop_size = crop_size
+        self.std_threshold = std_threshold
+        self.num_classes = len(RenalCancerType)
+        self.one_hot = one_hot
+        self.max_threads = 32
+        self._parallel_compute_std()
+        # self._compute_std_naive()
+        if remove_white:
+            self._filter_white()
+    
+    def _compute_std_naive(self):
+
+        init_time = time.perf_counter()
+
+        previous_wsi_path = None
+
+        for index in range(len(self.section_list)):
+            section = self.section_list[index]
+            
+            if previous_wsi_path is not None and section.wsi_path == previous_wsi_path:
+                pass
+            else:
+                slide = openslide.OpenSlide(section.wsi_path)
+
+            previous_wsi_path = section.wsi_path
+            pil_object = slide.read_region([section.x,
+                                            section.y],
+                                        section.level,
+                                        [section.size,
+                                            section.size])
+
+            pil_object = pil_object.convert('RGB')
+
+            section.std = np.std(np.array(pil_object))
+
+        end_time = time.perf_counter()
+        print(f"Time taken to compute std {end_time - init_time}")
+
+    def _parallel_compute_std(self, step=32):
+        """Computes standard deviation of the extracted image, this method is about 3x faster than the naive implementation
+
+        Args:
+            step (int, optional): _description_. Defaults to 32.
+        """
+        threads = []
+
+        for idx in range(0,len(self.section_list),step):
+
+            tmp_thread = threading.Thread(target=self._compute_std, args=[idx, step, len(self.section_list)])
+            tmp_thread.start()
+            threads.append(tmp_thread)
+
+            if len(threads) == self.max_threads:
+                threads.pop(0).join()
+
+        for thread in threads:
+            thread.join()
+
+    def _compute_std(self, start, step, stop):
+
+        previous_wsi_path = None
+
+        for index in range(start, start+step if start + step < stop else stop):
+
+            section = self.section_list[index]
+            
+            if previous_wsi_path is not None and section.wsi_path == previous_wsi_path:
+                pass
+            else:
+                slide = openslide.OpenSlide(section.wsi_path)
+
+            previous_wsi_path = section.wsi_path
+            pil_object = slide.read_region([section.x,
+                                            section.y],
+                                        section.level,
+                                        [section.size,
+                                            section.size])
+
+            pil_object = pil_object.convert('RGB')
+            section.std = np.std(np.array(pil_object))
+
+
+    def _filter_white(self):
+        self.section_list = [section for section in self.section_list if section.std > self.std_threshold]
+
+    def __len__(self):
+        return len(self.section_list)
+
+    def __getitem__(self, index):
+
+        slide = openslide.OpenSlide(self.section_list[index].wsi_path)
+        pil_object = slide.read_region([self.section_list[index].x,
+                                        self.section_list[index].y],
+                                       self.section_list[index].level,
+                                       [self.section_list[index].size,
+                                        self.section_list[index].size])
+        pil_object = pil_object.convert('RGB')
+        pil_object = pil_object.resize(size=(self.crop_size, self.crop_size))
+        
+        torch_tensor_convertor = transforms.ToTensor()
+        img = torch_tensor_convertor(pil_object)
+
+        if self.section_list[index].std > self.std_threshold:
+            label = torch.tensor(self.section_list[index].label)
+        else:
+            # Returning -1 means that the image looks like a white square
+            label = torch.tensor(-1)
+
+        if self.one_hot and label != -1:
+            return img, F.one_hot(label, num_classes=self.num_classes)
+        elif self.one_hot:
+            return img, torch.zeros(self.num_classes)
+        else: 
+            return img, label
 
 class SlideManager:
     def __init__(self, tile_size: int, overlap: bool = True, verbose: bool = False):
@@ -190,8 +319,6 @@ class DatasetManager:
 
     def make_dataset(self, shuffle=True):
 
-        self._to_image(1)
-
         dataset = tf.data.Dataset.from_tensor_slices([i for i in range(len(self.tile_placeholders))])
         if shuffle:
             dataset = dataset.shuffle(50000)
@@ -204,6 +331,9 @@ class DatasetManager:
         dataset = dataset.batch(self.batch_size)
         dataset = dataset.prefetch(buffer_size=tf.data.AUTOTUNE)
         return dataset
+
+    def make_pytorch_dataset(self, remove_white: bool = True) -> Dataset:
+        return WSIDatasetTorch(self.tile_placeholders, self.crop_size, self.std_threshold, self.one_hot, remove_white)
 
     @property
     def get_tile_placeholders(self):
