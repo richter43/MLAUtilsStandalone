@@ -31,9 +31,10 @@ class WSIDatasetTorch(Dataset):
         self.num_classes = len(RenalCancerType)
         self.one_hot = one_hot
         self.max_threads = 32
-        self._parallel_compute_std()
+        #self._parallel_compute_std()
         # self._compute_std_naive()
         if remove_white:
+            self._parallel_compute_std()
             self._filter_white()
     
     def _compute_std_naive(self):
@@ -211,8 +212,10 @@ class SlideManager:
                                   downsample,
                                   slide_metadata.wsi_path)
 
-        if slide_metadata.xml_path is not None:
-            point_info = PointInfo(get_points_xml_asap(slide_metadata.xml_path, "tumor"))
+        if slide_metadata.xml_path is not None and annotated_only == True:
+            point_info = PointInfo(get_points_xml_asap(slide_metadata.xml_path))
+        elif slide_metadata.xml_path is not None:
+            point_info = PointInfo(get_points_xml_asap(slide_metadata.xml_path))
 
         patches_to_drop_i = []
 
@@ -247,6 +250,7 @@ class SlideManager:
         
         if annotated_only == True:
             #drop not annotated patches
+            print(f"dropping {len(patches_to_drop_i)} non-annotated patches")
             for dropped, i_to_drop in enumerate(patches_to_drop_i):
                 self.__sections.pop(i_to_drop-dropped)
 
@@ -285,7 +289,7 @@ class DatasetManager:
         self.batch_size = batch_size
         self.annotated_only = annotated_only
         self.section_manager = SlideManager(tile_size, overlap=self.overlap, verbose=verbose)
-        self.tile_placeholders = [crop for slide_metadata in inputs for crop in self.section_manager.crop(slide_metadata)]
+        self.tile_placeholders = [crop for slide_metadata in inputs for crop in self.section_manager.crop(slide_metadata, annotated_only= annotated_only)]
 
         print("*"*len("Found in total {} tiles.".format(len(self.tile_placeholders))))
         print("Found in total:\n {} tiles\n belonging to {} slides".format(len(self.tile_placeholders),
@@ -355,7 +359,7 @@ class DatasetManager:
         return dataset
 
     def make_pytorch_dataset(self, remove_white: bool = True) -> Dataset:
-        return WSIDatasetTorch(self.tile_placeholders, self.crop_size, self.std_threshold, self.one_hot, remove_white)
+        return WSIDatasetTorch(self.tile_placeholders, self.crop_size, self.std_threshold, self.one_hot, remove_white and self.annotated_only == False)
 
     @property
     def get_tile_placeholders(self):
