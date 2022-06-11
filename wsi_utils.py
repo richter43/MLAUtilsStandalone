@@ -39,7 +39,7 @@ class WSIDatasetTorch(Dataset):
         # self._compute_std_naive()
         
         self.remove_white = remove_white
-        if remove_white:
+        if remove_white and self.annotated_only == False:
             self._filter_white()
     
     def _compute_std_naive(self):
