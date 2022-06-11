@@ -188,7 +188,7 @@ class SlideManager:
             print("# of tiles:{}".format(n_tiles))
             print("-" * len("{} stats:".format(filepath)))
 
-    def crop(self, slide_metadata: SlideMetadata) -> List[Section]:
+    def crop(self, slide_metadata: SlideMetadata, annotated_only: bool = False) -> List[Section]:
         """Crops 
 
         Args:
@@ -214,7 +214,9 @@ class SlideManager:
         if slide_metadata.xml_path is not None:
             point_info = PointInfo(get_points_xml_asap(slide_metadata.xml_path, "tumor"))
 
-        for index in self.__sections:
+        patches_to_drop_i = []
+
+        for i, index in enumerate(self.__sections):
             index.wsi_path = slide_metadata.wsi_path    
 
             # Assigns label depending on the intersection of the image with the annotation
@@ -222,13 +224,31 @@ class SlideManager:
                 square = index.create_square_polygon()
                 intercepting_polygons = point_info.strtree.query(square)
 
-                label = RenalCancerType.NOT_CANCER.value
+                label = -1
                 for poly in intercepting_polygons:
                     if poly.intersection(square).area / square.area >= 0.5 and point_info.get_label_of_polygon(poly) == "tumor":
                         label = slide_metadata.label
                         break
-                    
-            index.label = label
+                    elif poly.intersection(square).area / square.area >= 0.5 and annotated_only == True:
+                        label = RenalCancerType.NOT_CANCER.value
+                        break
+                
+
+            if annotated_only == False:
+                #should be backward compatible
+                index.label = label if label !=-1 else RenalCancerType.NOT_CANCER.value
+            else:
+                if label != -1:
+                    #proceed normally
+                    index.label = label
+                else:
+                    #mark the patch as dropped, it's not annotated and we don't want it
+                    patches_to_drop_i.append(i)
+        
+        if annotated_only == True:
+            #drop not annotated patches
+            for dropped, i_to_drop in enumerate(patches_to_drop_i):
+                self.__sections.pop(i_to_drop-dropped)
 
         return self.__sections
 
@@ -241,6 +261,7 @@ class DatasetManager:
                  batch_size: int = 32,
                  one_hot: bool = True,
                  std_threshold: int = 20,
+                 annotated_only: bool = False,
                  verbose: bool = False):
         """_summary_
 
@@ -262,6 +283,7 @@ class DatasetManager:
         self.num_classes = len(RenalCancerType)
         self.channels = channels
         self.batch_size = batch_size
+        self.annotated_only = annotated_only
         self.section_manager = SlideManager(tile_size, overlap=self.overlap, verbose=verbose)
         self.tile_placeholders = [crop for slide_metadata in inputs for crop in self.section_manager.crop(slide_metadata)]
 
