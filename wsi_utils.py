@@ -32,11 +32,12 @@ class WSIDatasetTorch(Dataset):
         self.one_hot = one_hot
         self.max_threads = 32
 
+        self.annotated_only = annotated_only
         if self.annotated_only == False:
             #we skip this computation for speedup as we don't need it (we assume the annotations don't depict the background of the wsi)
             self._parallel_compute_std()
         # self._compute_std_naive()
-        self.annotated_only = annotated_only
+        
         self.remove_white = remove_white
         if remove_white:
             self._filter_white()
@@ -221,7 +222,7 @@ class SlideManager:
         if slide_metadata.xml_path is not None and annotated_only == True:
             point_info = PointInfo(get_points_xml_asap(slide_metadata.xml_path))
         elif slide_metadata.xml_path is not None:
-            point_info = PointInfo(get_points_xml_asap(slide_metadata.xml_path))
+            point_info = PointInfo(get_points_xml_asap(slide_metadata.xml_path, "tumor"))
 
         patches_to_drop_i = []
 
