@@ -23,7 +23,7 @@ from .wsi_utils_dataclasses import Section, SlideMetadata
 
 class WSIDatasetTorch(Dataset):
 
-    def __init__(self, section_list: List[Section], crop_size: int, std_threshold: float, one_hot: bool = True, remove_white: bool = True):
+    def __init__(self, section_list: List[Section], crop_size: int, std_threshold: float, one_hot: bool = True, remove_white: bool = True, annotated_only: bool = False):
         super(WSIDatasetTorch, self).__init__()
         self.section_list : List[Section] = section_list
         self.crop_size = crop_size
@@ -31,10 +31,14 @@ class WSIDatasetTorch(Dataset):
         self.num_classes = len(RenalCancerType)
         self.one_hot = one_hot
         self.max_threads = 32
-        #self._parallel_compute_std()
-        # self._compute_std_naive()
-        if remove_white:
+
+        if self.annotated_only == False:
+            #we skip this computation for speedup as we don't need it (we assume the annotations don't depict the background of the wsi)
             self._parallel_compute_std()
+        # self._compute_std_naive()
+        self.annotated_only = annotated_only
+        self.remove_white = remove_white
+        if remove_white:
             self._filter_white()
     
     def _compute_std_naive(self):
@@ -128,13 +132,15 @@ class WSIDatasetTorch(Dataset):
         
         torch_tensor_convertor = transforms.ToTensor()
         img = torch_tensor_convertor(pil_object)
-
-        if self.section_list[index].std > self.std_threshold:
-            label = torch.tensor(self.section_list[index].label)
+        if self.annotated_only == False:
+            if self.section_list[index].std > self.std_threshold:
+                label = torch.tensor(self.section_list[index].label)
+            else:
+                # Returning -1 means that the image looks like a white square
+                label = torch.tensor(-1)
         else:
-            # Returning -1 means that the image looks like a white square
-            label = torch.tensor(-1)
-
+            #patch can never be white, label is always accurate (we also avoided computing the standard deviation for speedup)
+            label = torch.tensor(self.section_list[index].label)
         if self.one_hot and label != -1:
             return img, F.one_hot(label, num_classes=self.num_classes)
         elif self.one_hot:
@@ -359,7 +365,7 @@ class DatasetManager:
         return dataset
 
     def make_pytorch_dataset(self, remove_white: bool = True) -> Dataset:
-        return WSIDatasetTorch(self.tile_placeholders, self.crop_size, self.std_threshold, self.one_hot, remove_white and self.annotated_only == False)
+        return WSIDatasetTorch(self.tile_placeholders, self.crop_size, self.std_threshold, self.one_hot, remove_white and self.annotated_only == False, annotated_only=self.annotated_only)
 
     @property
     def get_tile_placeholders(self):
