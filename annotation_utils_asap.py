@@ -65,7 +65,7 @@ def get_annotationdata_list(annotation_list: mir.AnnotationList, selected_group:
 
         group_name = annotation.getGroup().getName()
 
-        if group_name is not None and group_name != selected_group:
+        if group_name is not None and selected_group is not None and group_name != selected_group:
             continue
 
         points_annotation = []
