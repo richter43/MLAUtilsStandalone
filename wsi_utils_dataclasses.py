@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional, List
 from shapely.geometry import Polygon
+from .ancillary_definitions import RenalCancerType
 import os
 
 
@@ -9,10 +10,10 @@ import os
 class SlideMetadata:
     """Information about the slide (Location and such)
     """
-    wsi_path: Optional[str]
-    annotation_path: str
-    is_roi: bool
-    label: str
+    wsi_path: Optional[str] # Made optional after seeing that the ROI annotations do not depend on the original WSI
+    annotation_path: str # Generalized for accepting WSI files aswell as XML files
+    is_roi: bool # Boolean that facilitates the recognition of the annotation_path being either a WSI file or a XML file
+    label: int #Label based on RenalCancerType enum
 
 @dataclass
 class PatientMetadata:

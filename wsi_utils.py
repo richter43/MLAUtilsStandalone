@@ -1,6 +1,6 @@
 import math
 import os
-from typing import List, Optional
+from typing import List, Optional, Generator
 
 import threading
 import matplotlib.pyplot as plt
@@ -196,16 +196,7 @@ class SlideManager:
             print("# of tiles:{}".format(n_tiles))
             print("-" * len("{} stats:".format(filepath)))
 
-    def crop(self, slide_metadata: SlideMetadata, annotated_only: bool = False) -> List[Section]:
-        """Crops 
-
-        Args:
-            slide_metadata (SlideMetadata): _description_
-            label (_type_, optional): _description_. Defaults to None.
-
-        Returns:
-            List[Section]: _description_
-        """
+    def __crop_xml(self, slide_metadata: SlideMetadata, annotated_only: bool) -> List[Section]:
 
         slide = openslide.OpenSlide(slide_metadata.wsi_path)
         downsample = slide.level_downsamples[self.level]
@@ -219,10 +210,10 @@ class SlideManager:
                                   downsample,
                                   slide_metadata.wsi_path)
 
-        if slide_metadata.xml_path is not None and annotated_only == True:
-            point_info = PointInfo(get_points_xml_asap(slide_metadata.xml_path))
-        elif slide_metadata.xml_path is not None:
-            point_info = PointInfo(get_points_xml_asap(slide_metadata.xml_path, "tumor"))
+        if annotated_only == True:
+            point_info = PointInfo(get_points_xml_asap(slide_metadata.annotation_path))
+        else:
+            point_info = PointInfo(get_points_xml_asap(slide_metadata.annotation_path, "tumor"))
 
         patches_to_drop_i = []
 
@@ -230,7 +221,7 @@ class SlideManager:
             index.wsi_path = slide_metadata.wsi_path    
 
             # Assigns label depending on the intersection of the image with the annotation
-            if slide_metadata.xml_path is not None:
+            if not slide_metadata.is_roi:
                 square = index.create_square_polygon()
                 intercepting_polygons = point_info.strtree.query(square)
 
@@ -263,9 +254,43 @@ class SlideManager:
 
         return self.__sections
 
+    def __crop_roi(self, slide_metadata: SlideMetadata) -> List[Section]:
+
+        slide = openslide.OpenSlide(slide_metadata.annotation_path)
+        downsample = slide.level_downsamples[self.level]
+
+        _ , (bounds_x, bounds_y, bounds_width, bounds_height) = get_region_lv0(slide)
+
+        self.__generate_sections(bounds_x,
+                                  bounds_y,
+                                  bounds_width,
+                                  bounds_height,
+                                  downsample,
+                                  slide_metadata.wsi_path)
+
+        return self.__sections
+
+    def crop(self, slide_metadata: SlideMetadata, annotated_only: bool = False) -> List[Section]:
+        """Crops 
+
+        Args:
+            slide_metadata (SlideMetadata): _description_
+            annotated_only (bool): _description_
+
+        Returns:
+            List[Section]: _description_
+        """
+
+        if slide_metadata.is_roi:
+            return self.__crop_roi(slide_metadata)
+        else:
+            return self.__crop_xml(slide_metadata, annotated_only)
+
+        
+
 class DatasetManager:
     def __init__(self,
-                 inputs: List[SlideMetadata],
+                 inputs: Generator[SlideMetadata, SlideMetadata, None],
                  tile_size: int,
                  overlap: float = 1.0,
                  channels: int = 3,
