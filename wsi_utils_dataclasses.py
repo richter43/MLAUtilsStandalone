@@ -1,14 +1,46 @@
+from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, List
 from shapely.geometry import Polygon
+import os
+
 
 @dataclass
 class SlideMetadata:
-    """asd
+    """Information about the slide (Location and such)
     """
-    wsi_path: str
-    xml_path: Optional[str] = None
-    label: Optional[str] = None
+    wsi_path: Optional[str]
+    annotation_path: str
+    is_roi: bool
+    label: str
+
+@dataclass
+class PatientMetadata:
+    wsi_root: str
+    wsi_files: List[str]
+    annotation_root: str
+    ann_files: List[str]
+    is_roi: bool
+    diagnosis: str
+
+    def get_slide_metadata(self):
+
+      if self.is_roi:
+        #Zipping is not used in this case due to the impossibility of ensuring a univocal map between roi files and wsi files 
+        for ann_file in self.ann_files:
+          #TODO: Change None to the real WSIs in the event further info is requried to be extracted from the WSIs
+          yield SlideMetadata(None, os.path.join(self.annotation_root,ann_file), True, self.diagnosis)
+      else:
+        #Zipping works due to any wsi file being univocally mapped to a xml annotation
+        for wsi_file, ann_file in zip(self.wsi_files, self.ann_files):
+          yield SlideMetadata(os.path.join(self.wsi_root, wsi_file), os.path.join(self.annotation_root,ann_file), False, self.diagnosis)
+
+    def __add__(self, other: PatientMetadata):
+      assert self.wsi_root == other.wsi_root
+      assert self.annotation_root == other.annotation_root
+      assert self.is_roi == other.is_roi
+
+      return PatientMetadata(self.wsi_root, self.wsi_files + other.wsi_files, self.annotation_root, self.ann_files + other.ann_files, self.is_roi, self.diagnosis)
 
 @dataclass
 class Section:
