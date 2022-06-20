@@ -321,11 +321,18 @@ class DatasetManager:
         self.batch_size = batch_size
         self.annotated_only = annotated_only
         self.section_manager = SlideManager(tile_size, overlap=self.overlap, verbose=verbose)
-        self.tile_placeholders = [crop for slide_metadata in inputs for crop in self.section_manager.crop(slide_metadata, annotated_only= annotated_only)]
+
+        len_inputs = 0
+        self.tile_placeholders = []
+
+        for slide_metadata in inputs:
+            len_inputs += 1
+            for crop in self.section_manager.crop(slide_metadata, annotated_only=annotated_only):
+                self.tile_placeholders.append(crop)
 
         print("*"*len("Found in total {} tiles.".format(len(self.tile_placeholders))))
         print("Found in total:\n {} tiles\n belonging to {} slides".format(len(self.tile_placeholders),
-                                                                           len(inputs)))
+                                                                           len_inputs))
         print("*" * len("Found in total {} tiles.".format(len(self.tile_placeholders))))
 
     def _to_image(self, x):
