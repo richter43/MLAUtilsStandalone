@@ -49,7 +49,7 @@ class Section:
     y: int
     size: int
     level: int
-    wsi_path: str = field(init=False)
+    wsi_path: str
     label: str = field(init=False)
     std: float = field(init=False)
     

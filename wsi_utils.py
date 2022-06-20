@@ -19,7 +19,7 @@ from .ancillary_definitions import RenalCancerType
 from .annotation_utils_asap import get_points_xml_asap, get_region_lv0
 from .annotation_utils_dataclasses import PointInfo
 from .wsi_utils_dataclasses import Section, SlideMetadata
-from .utils import UtilException
+from .utils import UtilException, 
 
 
 class WSIDatasetTorch(Dataset):
@@ -184,7 +184,7 @@ class SlideManager:
                 if x + side > width or y + side > height:
                     continue
                 n_tiles += 1
-                self.__sections.append(Section(x=x_start + x, y= y_start + y, size=int(side // downsample_factor), level=self.level))
+                self.__sections.append(Section(x=x_start + x, y= y_start + y, size=int(side // downsample_factor), level=self.level, wsi_path=filepath))
         if self.verbose:
             print("-"*len("{} stats:".format(filepath)))
             print("{} stats:".format(filepath))
@@ -219,7 +219,7 @@ class SlideManager:
         patches_to_drop_i = []
 
         for i, index in enumerate(self.__sections):
-            index.wsi_path = slide_metadata.wsi_path    
+            index.wsi_path = slide_metadata.wsi_path
 
             # Assigns label depending on the intersection of the image with the annotation
             if not slide_metadata.is_roi:
@@ -262,12 +262,13 @@ class SlideManager:
 
         _ , (bounds_x, bounds_y, bounds_width, bounds_height) = get_region_lv0(slide)
 
+
         self.__generate_sections(bounds_x,
                                   bounds_y,
                                   bounds_width,
                                   bounds_height,
                                   downsample,
-                                  slide_metadata.wsi_path)
+                                  slide_metadata.annotation_path)
 
         return self.__sections
 

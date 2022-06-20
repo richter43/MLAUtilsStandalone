@@ -38,7 +38,7 @@ def get_label_from_path(path: str):
     else:
         return RenalCancerType.CLEAR_CELL.value
 
-class UtilException(Exception):
+class UtilException(BaseException):
     pass
 
 class SelectedGroupNotFound(UtilException):
