@@ -19,6 +19,7 @@ from .ancillary_definitions import RenalCancerType
 from .annotation_utils_asap import get_points_xml_asap, get_region_lv0
 from .annotation_utils_dataclasses import PointInfo
 from .wsi_utils_dataclasses import Section, SlideMetadata
+from .utils import UtilException
 
 
 class WSIDatasetTorch(Dataset):
@@ -327,8 +328,13 @@ class DatasetManager:
 
         for slide_metadata in inputs:
             len_inputs += 1
-            for crop in self.section_manager.crop(slide_metadata, annotated_only=annotated_only):
-                self.tile_placeholders.append(crop)
+            try:
+                crop_list = self.section_manager.crop(slide_metadata, annotated_only=annotated_only)
+                for crop in crop_list:
+                    self.tile_placeholders.append(crop)
+            except UtilException:
+                continue
+            
 
         print("*"*len("Found in total {} tiles.".format(len(self.tile_placeholders))))
         print("Found in total:\n {} tiles\n belonging to {} slides".format(len(self.tile_placeholders),
