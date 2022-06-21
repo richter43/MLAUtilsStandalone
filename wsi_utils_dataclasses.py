@@ -50,7 +50,7 @@ class Section:
     size: int
     level: int
     wsi_path: str
-    label: str = field(init=False)
+    label: str
     std: float = field(init=False)
     
     def create_square_polygon(self) -> Polygon:

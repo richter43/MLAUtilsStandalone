@@ -19,7 +19,7 @@ from .ancillary_definitions import RenalCancerType
 from .annotation_utils_asap import get_points_xml_asap, get_region_lv0
 from .annotation_utils_dataclasses import PointInfo
 from .wsi_utils_dataclasses import Section, SlideMetadata
-from .utils import UtilException, 
+from .utils import UtilException, get_label_from_path
 
 
 class WSIDatasetTorch(Dataset):
@@ -177,14 +177,15 @@ class SlideManager:
 
         n_tiles = 0
         # N.B. Tiles are considered in the 0 level
-        #TODO: There's no real need to pre-compute all of the boxes, an index should suffice to map from box to position 
+        #TODO: There's no real need to pre-compute all of the boxes, an index should suffice to map from box to position
+        label = get_label_from_path(filepath)
         for y in range(0, height, step):
             for x in range(0, width, step):
                 # x * step + side is right margin of the given tile
                 if x + side > width or y + side > height:
                     continue
                 n_tiles += 1
-                self.__sections.append(Section(x=x_start + x, y= y_start + y, size=int(side // downsample_factor), level=self.level, wsi_path=filepath))
+                self.__sections.append(Section(x=x_start + x, y= y_start + y, size=int(side // downsample_factor), level=self.level, wsi_path=filepath, label=label))
         if self.verbose:
             print("-"*len("{} stats:".format(filepath)))
             print("{} stats:".format(filepath))
@@ -211,7 +212,7 @@ class SlideManager:
                                   downsample,
                                   slide_metadata.wsi_path)
 
-        if annotated_only == True:
+        if annotated_only:
             point_info = PointInfo(get_points_xml_asap(slide_metadata.annotation_path))
         else:
             point_info = PointInfo(get_points_xml_asap(slide_metadata.annotation_path, "tumor"))
@@ -228,10 +229,12 @@ class SlideManager:
 
                 label = -1
                 for poly in intercepting_polygons:
-                    if poly.intersection(square).area / square.area >= 0.5 and point_info.get_label_of_polygon(poly) == "tumor":
+                    intersected_area = poly.intersection(square).area
+                    large_intersection_bool = intersected_area / square.area >= 0.5
+                    if large_intersection_bool and point_info.get_label_of_polygon(poly) == "tumor":
                         label = slide_metadata.label
                         break
-                    elif poly.intersection(square).area / square.area >= 0.5 and annotated_only == True:
+                    elif large_intersection_bool and annotated_only == True:
                         label = RenalCancerType.NOT_CANCER.value
                         break
                 
@@ -328,11 +331,11 @@ class DatasetManager:
         self.tile_placeholders = []
 
         for slide_metadata in inputs:
-            len_inputs += 1
             try:
                 crop_list = self.section_manager.crop(slide_metadata, annotated_only=annotated_only)
                 for crop in crop_list:
                     self.tile_placeholders.append(crop)
+                len_inputs += 1
             except UtilException:
                 continue
             

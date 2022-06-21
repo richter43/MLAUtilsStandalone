@@ -57,7 +57,7 @@ def get_annotationdata_list(annotation_list: mir.AnnotationList, selected_group:
 
     groups = [group.getName() for group in annotation_list.getGroups()]
 
-    if selected_group is not None:
+    if selected_group is not None and selected_group not in groups:
         raise SelectedGroupNotFound
 
     ann_list: List[AnnotationData] = []
