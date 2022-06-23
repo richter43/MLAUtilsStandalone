@@ -37,3 +37,9 @@ def get_label_from_path(path: str):
         return RenalCancerType.PAPILLARY.value
     else:
         return RenalCancerType.CLEAR_CELL.value
+
+class UtilException(BaseException):
+    pass
+
+class SelectedGroupNotFound(UtilException):
+    pass

@@ -1,6 +1,6 @@
 import math
 import os
-from typing import List, Optional
+from typing import List, Optional, Generator
 
 import threading
 import matplotlib.pyplot as plt
@@ -19,11 +19,12 @@ from .ancillary_definitions import RenalCancerType
 from .annotation_utils_asap import get_points_xml_asap, get_region_lv0
 from .annotation_utils_dataclasses import PointInfo
 from .wsi_utils_dataclasses import Section, SlideMetadata
+from .utils import UtilException, get_label_from_path
 
 
 class WSIDatasetTorch(Dataset):
 
-    def __init__(self, section_list: List[Section], crop_size: int, std_threshold: float, one_hot: bool = True, remove_white: bool = True):
+    def __init__(self, section_list: List[Section], crop_size: int, std_threshold: float, one_hot: bool = True, remove_white: bool = True, annotated_only: bool = False):
         super(WSIDatasetTorch, self).__init__()
         self.section_list : List[Section] = section_list
         self.crop_size = crop_size
@@ -31,9 +32,15 @@ class WSIDatasetTorch(Dataset):
         self.num_classes = len(RenalCancerType)
         self.one_hot = one_hot
         self.max_threads = 32
-        self._parallel_compute_std()
+
+        self.annotated_only = annotated_only
+        if self.annotated_only == False:
+            #we skip this computation for speedup as we don't need it (we assume the annotations don't depict the background of the wsi)
+            self._parallel_compute_std()
         # self._compute_std_naive()
-        if remove_white:
+        
+        self.remove_white = remove_white
+        if remove_white and self.annotated_only == False:
             self._filter_white()
     
     def _compute_std_naive(self):
@@ -127,13 +134,15 @@ class WSIDatasetTorch(Dataset):
         
         torch_tensor_convertor = transforms.ToTensor()
         img = torch_tensor_convertor(pil_object)
-
-        if self.section_list[index].std > self.std_threshold:
-            label = torch.tensor(self.section_list[index].label)
+        if self.annotated_only == False:
+            if self.section_list[index].std > self.std_threshold:
+                label = torch.tensor(self.section_list[index].label)
+            else:
+                # Returning -1 means that the image looks like a white square
+                label = torch.tensor(-1)
         else:
-            # Returning -1 means that the image looks like a white square
-            label = torch.tensor(-1)
-
+            #patch can never be white, label is always accurate (we also avoided computing the standard deviation for speedup)
+            label = torch.tensor(self.section_list[index].label)
         if self.one_hot and label != -1:
             return img, F.one_hot(label, num_classes=self.num_classes)
         elif self.one_hot:
@@ -168,14 +177,15 @@ class SlideManager:
 
         n_tiles = 0
         # N.B. Tiles are considered in the 0 level
-        #TODO: There's no real need to pre-compute all of the boxes, an index should suffice to map from box to position 
+        #TODO: There's no real need to pre-compute all of the boxes, an index should suffice to map from box to position
+        label = get_label_from_path(filepath)
         for y in range(0, height, step):
             for x in range(0, width, step):
                 # x * step + side is right margin of the given tile
                 if x + side > width or y + side > height:
                     continue
                 n_tiles += 1
-                self.__sections.append(Section(x=x_start + x, y= y_start + y, size=int(side // downsample_factor), level=self.level))
+                self.__sections.append(Section(x=x_start + x, y= y_start + y, size=int(side // downsample_factor), level=self.level, wsi_path=filepath, label=label))
         if self.verbose:
             print("-"*len("{} stats:".format(filepath)))
             print("{} stats:".format(filepath))
@@ -188,16 +198,7 @@ class SlideManager:
             print("# of tiles:{}".format(n_tiles))
             print("-" * len("{} stats:".format(filepath)))
 
-    def crop(self, slide_metadata: SlideMetadata) -> List[Section]:
-        """Crops 
-
-        Args:
-            slide_metadata (SlideMetadata): _description_
-            label (_type_, optional): _description_. Defaults to None.
-
-        Returns:
-            List[Section]: _description_
-        """
+    def __crop_xml(self, slide_metadata: SlideMetadata, annotated_only: bool) -> List[Section]:
 
         slide = openslide.OpenSlide(slide_metadata.wsi_path)
         downsample = slide.level_downsamples[self.level]
@@ -211,36 +212,97 @@ class SlideManager:
                                   downsample,
                                   slide_metadata.wsi_path)
 
-        if slide_metadata.xml_path is not None:
-            point_info = PointInfo(get_points_xml_asap(slide_metadata.xml_path, "tumor"))
+        if annotated_only:
+            point_info = PointInfo(get_points_xml_asap(slide_metadata.annotation_path))
+        else:
+            point_info = PointInfo(get_points_xml_asap(slide_metadata.annotation_path, "tumor"))
 
-        for index in self.__sections:
-            index.wsi_path = slide_metadata.wsi_path    
+        patches_to_drop_i = []
+
+        for i, index in enumerate(self.__sections):
+            index.wsi_path = slide_metadata.wsi_path
 
             # Assigns label depending on the intersection of the image with the annotation
-            if slide_metadata.xml_path is not None:
+            if not slide_metadata.is_roi:
                 square = index.create_square_polygon()
                 intercepting_polygons = point_info.strtree.query(square)
 
-                label = RenalCancerType.NOT_CANCER.value
+                label = -1
                 for poly in intercepting_polygons:
-                    if poly.intersection(square).area / square.area >= 0.5 and point_info.get_label_of_polygon(poly) == "tumor":
+                    intersected_area = poly.intersection(square).area
+                    large_intersection_bool = intersected_area / square.area >= 0.5
+                    if large_intersection_bool and point_info.get_label_of_polygon(poly) == "tumor":
                         label = slide_metadata.label
                         break
-                    
-            index.label = label
+                    elif large_intersection_bool and annotated_only == True:
+                        label = RenalCancerType.NOT_CANCER.value
+                        break
+                
+
+            if annotated_only == False:
+                #should be backward compatible
+                index.label = label if label !=-1 else RenalCancerType.NOT_CANCER.value
+            else:
+                if label != -1:
+                    #proceed normally
+                    index.label = label
+                else:
+                    #mark the patch as dropped, it's not annotated and we don't want it
+                    patches_to_drop_i.append(i)
+        
+        if annotated_only == True:
+            #drop not annotated patches
+            print(f"dropping {len(patches_to_drop_i)} non-annotated patches")
+            for dropped, i_to_drop in enumerate(patches_to_drop_i):
+                self.__sections.pop(i_to_drop-dropped)
 
         return self.__sections
 
+    def __crop_roi(self, slide_metadata: SlideMetadata) -> List[Section]:
+
+        slide = openslide.OpenSlide(slide_metadata.annotation_path)
+        downsample = slide.level_downsamples[self.level]
+
+        _ , (bounds_x, bounds_y, bounds_width, bounds_height) = get_region_lv0(slide)
+
+
+        self.__generate_sections(bounds_x,
+                                  bounds_y,
+                                  bounds_width,
+                                  bounds_height,
+                                  downsample,
+                                  slide_metadata.annotation_path)
+
+        return self.__sections
+
+    def crop(self, slide_metadata: SlideMetadata, annotated_only: bool = False) -> List[Section]:
+        """Crops 
+
+        Args:
+            slide_metadata (SlideMetadata): _description_
+            annotated_only (bool): _description_
+
+        Returns:
+            List[Section]: _description_
+        """
+
+        if slide_metadata.is_roi:
+            return self.__crop_roi(slide_metadata)
+        else:
+            return self.__crop_xml(slide_metadata, annotated_only)
+
+        
+
 class DatasetManager:
     def __init__(self,
-                 inputs: List[SlideMetadata],
+                 inputs: Generator[SlideMetadata, SlideMetadata, None],
                  tile_size: int,
                  overlap: float = 1.0,
                  channels: int = 3,
                  batch_size: int = 32,
                  one_hot: bool = True,
                  std_threshold: int = 20,
+                 annotated_only: bool = False,
                  verbose: bool = False):
         """_summary_
 
@@ -262,12 +324,25 @@ class DatasetManager:
         self.num_classes = len(RenalCancerType)
         self.channels = channels
         self.batch_size = batch_size
+        self.annotated_only = annotated_only
         self.section_manager = SlideManager(tile_size, overlap=self.overlap, verbose=verbose)
-        self.tile_placeholders = [crop for slide_metadata in inputs for crop in self.section_manager.crop(slide_metadata)]
+
+        len_inputs = 0
+        self.tile_placeholders = []
+
+        for slide_metadata in inputs:
+            try:
+                crop_list = self.section_manager.crop(slide_metadata, annotated_only=annotated_only)
+                for crop in crop_list:
+                    self.tile_placeholders.append(crop)
+                len_inputs += 1
+            except UtilException:
+                continue
+            
 
         print("*"*len("Found in total {} tiles.".format(len(self.tile_placeholders))))
         print("Found in total:\n {} tiles\n belonging to {} slides".format(len(self.tile_placeholders),
-                                                                           len(inputs)))
+                                                                           len_inputs))
         print("*" * len("Found in total {} tiles.".format(len(self.tile_placeholders))))
 
     def _to_image(self, x):
@@ -333,7 +408,7 @@ class DatasetManager:
         return dataset
 
     def make_pytorch_dataset(self, remove_white: bool = True) -> Dataset:
-        return WSIDatasetTorch(self.tile_placeholders, self.crop_size, self.std_threshold, self.one_hot, remove_white)
+        return WSIDatasetTorch(self.tile_placeholders, self.crop_size, self.std_threshold, self.one_hot, remove_white and self.annotated_only == False, annotated_only=self.annotated_only)
 
     @property
     def get_tile_placeholders(self):

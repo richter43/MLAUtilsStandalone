@@ -13,6 +13,7 @@ from PIL import Image
 from shapely.geometry import Polygon
 
 from .annotation_utils_dataclasses import AnnotationData, PointInfo
+from .utils import SelectedGroupNotFound
 
 module_dir = os.path.dirname(__file__)
 with open(os.path.join(module_dir, "settings.json")) as f:
@@ -56,8 +57,8 @@ def get_annotationdata_list(annotation_list: mir.AnnotationList, selected_group:
 
     groups = [group.getName() for group in annotation_list.getGroups()]
 
-    if selected_group is not None:
-        assert selected_group in groups
+    if selected_group is not None and selected_group not in groups:
+        raise SelectedGroupNotFound
 
     ann_list: List[AnnotationData] = []
 
@@ -65,7 +66,7 @@ def get_annotationdata_list(annotation_list: mir.AnnotationList, selected_group:
 
         group_name = annotation.getGroup().getName()
 
-        if group_name is not None and group_name != selected_group:
+        if group_name is not None and selected_group is not None and group_name != selected_group:
             continue
 
         points_annotation = []
