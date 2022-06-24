@@ -3,6 +3,8 @@ import os
 from typing import List, Optional, Generator
 
 import threading
+import itertools
+import pathos
 import matplotlib.pyplot as plt
 import numpy as np
 import openslide
@@ -31,7 +33,7 @@ class WSIDatasetTorch(Dataset):
         self.std_threshold = std_threshold
         self.num_classes = len(RenalCancerType)
         self.one_hot = one_hot
-        self.max_threads = 32
+        self.max_threads = pathos.multiprocessing.cpu_count()
 
         self.annotated_only = annotated_only
         if self.annotated_only == False:
@@ -75,7 +77,7 @@ class WSIDatasetTorch(Dataset):
         """Computes standard deviation of the extracted image, this method is about 3x faster than the naive implementation
 
         Args:
-            step (int, optional): _description_. Defaults to 32.
+            step (int, optional): _description_. Defaults to cpu_count.
         """
         threads = []
 
@@ -177,15 +179,13 @@ class SlideManager:
 
         n_tiles = 0
         # N.B. Tiles are considered in the 0 level
-        #TODO: There's no real need to pre-compute all of the boxes, an index should suffice to map from box to position
+        # Attempted to optimize this section with processor and threads, their lifetime is way too small to justify the locks 
         label = get_label_from_path(filepath)
-        for y in range(0, height, step):
-            for x in range(0, width, step):
-                # x * step + side is right margin of the given tile
-                if x + side > width or y + side > height:
-                    continue
-                n_tiles += 1
-                self.__sections.append(Section(x=x_start + x, y= y_start + y, size=int(side // downsample_factor), level=self.level, wsi_path=filepath, label=label))
+
+        for y, x in itertools.product(range(0, height - side, step), range(0, width - side, step)):
+            n_tiles += 1
+            self.__sections.append(Section(x=x_start + x, y=y_start + y, size=int(side // downsample_factor), level=self.level, wsi_path=filepath, label=label))
+
         if self.verbose:
             print("-"*len("{} stats:".format(filepath)))
             print("{} stats:".format(filepath))
@@ -219,12 +219,11 @@ class SlideManager:
 
         patches_to_drop_i = []
 
-        for i, index in enumerate(self.__sections):
-            index.wsi_path = slide_metadata.wsi_path
-
+        for i, section in enumerate(self.__sections):
+            section.wsi_path = slide_metadata.wsi_path
             # Assigns label depending on the intersection of the image with the annotation
             if not slide_metadata.is_roi:
-                square = index.create_square_polygon()
+                square = section.square
                 intercepting_polygons = point_info.strtree.query(square)
 
                 label = -1
@@ -234,18 +233,18 @@ class SlideManager:
                     if large_intersection_bool and point_info.get_label_of_polygon(poly) == "tumor":
                         label = slide_metadata.label
                         break
-                    elif large_intersection_bool and annotated_only == True:
+                    elif large_intersection_bool and annotated_only:
                         label = RenalCancerType.NOT_CANCER.value
                         break
                 
 
-            if annotated_only == False:
+            if not annotated_only:
                 #should be backward compatible
-                index.label = label if label !=-1 else RenalCancerType.NOT_CANCER.value
+                section.label = label if label !=-1 else RenalCancerType.NOT_CANCER.value
             else:
                 if label != -1:
                     #proceed normally
-                    index.label = label
+                    section.label = label
                 else:
                     #mark the patch as dropped, it's not annotated and we don't want it
                     patches_to_drop_i.append(i)
@@ -264,7 +263,6 @@ class SlideManager:
         downsample = slide.level_downsamples[self.level]
 
         _ , (bounds_x, bounds_y, bounds_width, bounds_height) = get_region_lv0(slide)
-
 
         self.__generate_sections(bounds_x,
                                   bounds_y,
@@ -291,7 +289,18 @@ class SlideManager:
         else:
             return self.__crop_xml(slide_metadata, annotated_only)
 
-        
+# def thread_manual_fn(section_manager: SlideManager, slide_metadata: SlideMetadata, annotated_only: bool, return_list: List[Section]):
+#     try:
+#         return_list += section_manager.crop(slide_metadata, annotated_only=annotated_only)
+#     except UtilException:
+#         return
+
+def pool_fn(args):
+    section_manager, slide_metadata, annotated_only = args
+    try:
+        return section_manager.crop(slide_metadata, annotated_only=annotated_only)
+    except UtilException:
+        return None
 
 class DatasetManager:
     def __init__(self,
@@ -303,7 +312,10 @@ class DatasetManager:
                  one_hot: bool = True,
                  std_threshold: int = 20,
                  annotated_only: bool = False,
-                 verbose: bool = False):
+                 verbose: bool = False,
+                 standard: bool = True,
+                 pool_threading: bool = False,
+                 pool_processing: bool = False):
         """_summary_
 
         Args:
@@ -326,24 +338,84 @@ class DatasetManager:
         self.batch_size = batch_size
         self.annotated_only = annotated_only
         self.section_manager = SlideManager(tile_size, overlap=self.overlap, verbose=verbose)
+        self.verbose = verbose
+        self.tile_placeholders = []
+        self.standard_execution = standard
+        self.pool_threading = pool_threading
+        self.pool_processing = pool_processing
+
+        #NOTE: It was attempted to parallelize this code section (Using colab, which only has two CPU cores) 
+        # through multiprocessing (pathos library) and multithreading (Python's threading library), however, it took much 
+        # longer acquiring locks than in the actual computation
 
         len_inputs = 0
-        self.tile_placeholders = []
-
-        for slide_metadata in inputs:
-            try:
-                crop_list = self.section_manager.crop(slide_metadata, annotated_only=annotated_only)
-                for crop in crop_list:
-                    self.tile_placeholders.append(crop)
-                len_inputs += 1
-            except UtilException:
-                continue
-            
+        if self.standard_execution:
+            for slide_metadata in inputs:
+                try:
+                    self.tile_placeholders += self.section_manager.crop(slide_metadata, annotated_only=annotated_only)
+                    len_inputs += 1
+                except UtilException:
+                    continue
+        # Disabled given that it needs a global counter and it's already expensive as it is
+        # elif self.manual_threading:
+        #     self.tile_placeholders = self._multithreaded_manual_cropping(inputs)
+        elif self.pool_threading:
+            len_inputs, self.tile_placeholders = self._multithreaded_pooling_cropping(inputs)
+        elif self.pool_processing:
+            len_inputs, self.tile_placeholders = self._multithreaded_pooling_cropping(inputs)
 
         print("*"*len("Found in total {} tiles.".format(len(self.tile_placeholders))))
         print("Found in total:\n {} tiles\n belonging to {} slides".format(len(self.tile_placeholders),
                                                                            len_inputs))
         print("*" * len("Found in total {} tiles.".format(len(self.tile_placeholders))))
+
+
+    # def _multithreaded_manual_cropping(self, inputs):
+
+    #     tmp_thread_list = []
+    #     tmp_returns = []
+
+    #     for slide_metadata in inputs:
+    #         tmp_thread = threading.Thread(target=thread_manual_fn, args=[SlideManager(self.crop_size, overlap=self.overlap, verbose=self.verbose), slide_metadata, annotated_only, tmp_returns])
+    #         tmp_thread_list.append(tmp_thread)
+    #         tmp_thread.start()
+    #         if len(tmp_thread_list) > pathos.multiprocessing.cpu_count():
+    #             tmp_thread = tmp_thread_list.pop(0)
+    #             tmp_thread.join()
+                
+    #     for thread in tmp_thread_list:
+    #         thread.join()
+
+    #     return tmp_returns
+
+    def _get_iter_list(self, inputs):
+
+        for slide_metadata in inputs:
+            yield (SlideManager(self.crop_size, overlap=self.overlap, verbose=self.verbose), slide_metadata, self.annotated_only)
+
+    def _multithreaded_pooling_cropping(self, inputs):
+
+        iter_list = self._get_iter_list(inputs)
+
+        with pathos.threading.ThreadPool() as pool:
+            returns = pool.imap(pool_fn, iter_list, chunksize=5)
+
+        returns = list(filter(lambda x: x is not None, returns))
+        len_returns = len(returns)
+
+        return len_returns, [elem for elem_list in returns for elem in elem_list]
+
+    def _multiprocessing_pooling_cropping(self, inputs):
+
+        iter_list = self._get_iter_list(inputs)
+
+        with pathos.multiprocessing.ProcessPool() as pool:
+            returns = pool.imap(pool_fn, iter_list, chunksize=5)
+
+        returns = list(filter(lambda x: x is not None, returns))
+        len_returns = len(returns)
+
+        return len_returns, [elem for elem_list in returns for elem in elem_list]
 
     def _to_image(self, x):
 
@@ -479,5 +551,4 @@ def get_heatmap(tile_placeholders,
     slide_image = slide_image.convert('RGBA')
     slide_image.alpha_composite(roi_map)
     slide_image.convert('RGBA')
-    # segmentation[segmentation != 0] = 255
     return slide_image, segmentation
