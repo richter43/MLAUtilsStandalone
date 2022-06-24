@@ -17,7 +17,7 @@ def get_wsi_paths(data_folder: str, annotation_folder: str, wsi_to_load: int):
         wsi_paths.append(join(data_folder, wsi_fnames[i]))
 
         wsi_fname = wsi_fnames[i].split(".")
-        xml_fname = f"{wsi_fname[0]}.xml"
+        xml_fname = ".".join(wsi_fname[0:-1])+".xml"
 
         xml_paths.append(join(annotation_folder, xml_fname))
     
