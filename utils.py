@@ -2,6 +2,8 @@ import numpy as np
 import seaborn as sns
 from matplotlib import cm as plt_cmap
 from shapely.geometry import Polygon
+import openslide
+import pathos
 from .ancillary_definitions import RenalCancerType
 
 def seaborn_cm(cm, ax, tick_labels, fontsize=14):
@@ -37,6 +39,38 @@ def get_label_from_path(path: str):
         return RenalCancerType.PAPILLARY.value
     else:
         return RenalCancerType.CLEAR_CELL.value
+
+def singlethread(func):
+    def wrapper_mp(iter_obj):
+        returns = [func(*i) for i in iter_obj]
+        return returns
+    return wrapper_mp
+
+def multiprocessing(func):
+    def wrapper_mp(iter_obj):
+        with pathos.multiprocessing.ProcessPool() as pool:
+            #https://stackoverflow.com/questions/54324215/does-pathos-multiprocessing-have-starmap
+            returns = pool.map(lambda x: func(*x), iter_obj)
+        return returns
+    return wrapper_mp
+
+def multithreading(func):
+    def wrapper_mt(iter_obj):
+        with pathos.multiprocessing.ThreadingPool() as pool:
+            returns = pool.map(lambda x: func(*x), iter_obj)
+        return returns
+    return wrapper_mt
+
+@multiprocessing
+def std_standalone(wsi_path: str, x: int, y: int, level: int, size: int):
+    
+    slide = openslide.OpenSlide(wsi_path)
+    pil_object = slide.read_region([x, y],
+                                    level,
+                                    [size, size])
+    pil_object = pil_object.convert('RGB')
+
+    return np.std(np.array(pil_object))
 
 class UtilException(BaseException):
     pass

@@ -21,7 +21,7 @@ from .ancillary_definitions import RenalCancerType
 from .annotation_utils_asap import get_points_xml_asap, get_region_lv0
 from .annotation_utils_dataclasses import PointInfo
 from .wsi_utils_dataclasses import Section, SlideMetadata
-from .utils import UtilException, get_label_from_path
+from .utils import UtilException, get_label_from_path, multiprocessing, std_standalone
 
 
 class WSIDatasetTorch(Dataset):
@@ -38,16 +38,21 @@ class WSIDatasetTorch(Dataset):
         self.annotated_only = annotated_only
         if self.annotated_only == False:
             #we skip this computation for speedup as we don't need it (we assume the annotations don't depict the background of the wsi)
-            self._parallel_compute_std()
-        # self._compute_std_naive()
+
+            gen = [(section.wsi_path, section.x, section.y, section.level, section.size) for section in self.section_list]
+            std_list = std_standalone(gen)
+            for section, std in zip(self.section_list, std_list):
+                section.std = std
+            
+            # self._parallel_compute_std()
+            # self._compute_std_naive()
         
         self.remove_white = remove_white
         if remove_white and self.annotated_only == False:
             self._filter_white()
-    
-    def _compute_std_naive(self):
 
-        init_time = time.perf_counter()
+
+    def _compute_std_naive(self):
 
         previous_wsi_path = None
 
@@ -68,12 +73,9 @@ class WSIDatasetTorch(Dataset):
 
             pil_object = pil_object.convert('RGB')
 
-            section.std = np.std(np.array(pil_object))
+            section.std = f
 
-        end_time = time.perf_counter()
-        print(f"Time taken to compute std {end_time - init_time}")
-
-    def _parallel_compute_std(self, step=32):
+    def _parallel_compute_std(self):
         """Computes standard deviation of the extracted image, this method is about 3x faster than the naive implementation
 
         Args:
@@ -81,14 +83,13 @@ class WSIDatasetTorch(Dataset):
         """
         threads = []
 
+        step = int(len(self.section_list) // self.max_threads)
+
         for idx in range(0,len(self.section_list),step):
 
             tmp_thread = threading.Thread(target=self._compute_std, args=[idx, step, len(self.section_list)])
             tmp_thread.start()
             threads.append(tmp_thread)
-
-            if len(threads) == self.max_threads:
-                threads.pop(0).join()
 
         for thread in threads:
             thread.join()
@@ -198,6 +199,54 @@ class SlideManager:
             print("# of tiles:{}".format(n_tiles))
             print("-" * len("{} stats:".format(filepath)))
 
+    def __generate_sections_xml(self,
+                                slide_x_init: int,
+                                slide_y_init: int,
+                                width: int,
+                                height: int,
+                                downsample_factor: float,
+                                filepath: str, 
+                                point_info: PointInfo):
+        side = self.tile_size
+        step = side // self.overlap
+        # The usage of an encapsulating dunder doesn't seem to fit the use case here.
+        self.__sections = []
+
+        slide_x_final = slide_x_init + width
+        slide_y_final = slide_y_init + height
+
+        n_tiles = 0
+        # N.B. Tiles are considered in the 0 level
+        # Attempted to optimize this section with processor and threads, their lifetime is way too small to justify the locks
+
+        for ann_data in point_info.ann_list: 
+            x_init, y_init, x_final, y_final = ann_data.polygon.bounds
+
+            label = ann_data.group_name
+
+            overlayed_x_init = slide_x_init if (x_init - side) < slide_x_init else x_init - side
+            overlayed_y_init = slide_y_init if (y_init - side) < slide_y_init else y_init - side
+            overlayed_x_final = slide_x_final if (x_final + side) > slide_x_final else x_final + side
+            overlayed_y_final = slide_y_final if (y_final + side) > slide_y_final else y_final + side
+
+            for y, x in itertools.product(range(int(overlayed_y_init), int(overlayed_y_final), step), range(int(overlayed_x_init), int(overlayed_x_final), step)):
+                n_tiles += 1
+                
+                s = Section(x=x, y=y, size=int(side // downsample_factor), level=self.level, wsi_path=filepath, label=ann_data.group_name)
+                self.__sections.append(s)
+
+        if self.verbose:
+            print("-"*len("{} stats:".format(filepath)))
+            print("{} stats:".format(filepath))
+            print("step: {}".format(step))
+            print("y: {}".format(slide_y_init))
+            print("x: {}".format(slide_x_init))
+            print("slide width {}".format(width))
+            print("slide height {}".format(height))
+            print("downsample factor: {}".format(downsample_factor))
+            print("# of tiles:{}".format(n_tiles))
+            print("-" * len("{} stats:".format(filepath)))
+
     def __crop_xml(self, slide_metadata: SlideMetadata, annotated_only: bool) -> List[Section]:
 
         slide = openslide.OpenSlide(slide_metadata.wsi_path)
@@ -205,38 +254,39 @@ class SlideManager:
 
         _ , (bounds_x, bounds_y, bounds_width, bounds_height) = get_region_lv0(slide)
 
-        self.__generate_sections(bounds_x,
-                                  bounds_y,
-                                  bounds_width,
-                                  bounds_height,
-                                  downsample,
-                                  slide_metadata.wsi_path)
-
         if annotated_only:
             point_info = PointInfo(get_points_xml_asap(slide_metadata.annotation_path))
         else:
             point_info = PointInfo(get_points_xml_asap(slide_metadata.annotation_path, "tumor"))
 
+        self.__generate_sections_xml(bounds_x,
+                                    bounds_y,
+                                    bounds_width,
+                                    bounds_height,
+                                    downsample,
+                                    slide_metadata.wsi_path,
+                                    point_info)
+
         patches_to_drop_i = []
 
         for i, section in enumerate(self.__sections):
-            section.wsi_path = slide_metadata.wsi_path
-            # Assigns label depending on the intersection of the image with the annotation
-            if not slide_metadata.is_roi:
+            label = -1
+            if section.label == "tumor":
+                # Assigns label depending on the intersection of the image with the annotation
+                section.wsi_path = slide_metadata.wsi_path
                 square = section.square
                 intercepting_polygons = point_info.strtree.query(square)
-
-                label = -1
+                
                 for poly in intercepting_polygons:
                     intersected_area = poly.intersection(square).area
                     large_intersection_bool = intersected_area / square.area >= 0.5
-                    if large_intersection_bool and point_info.get_label_of_polygon(poly) == "tumor":
+
+                    if large_intersection_bool:
                         label = slide_metadata.label
                         break
-                    elif large_intersection_bool and annotated_only:
-                        label = RenalCancerType.NOT_CANCER.value
-                        break
-                
+            else:
+                label = RenalCancerType.NOT_CANCER.value
+                    
 
             if not annotated_only:
                 #should be backward compatible
@@ -249,7 +299,7 @@ class SlideManager:
                     #mark the patch as dropped, it's not annotated and we don't want it
                     patches_to_drop_i.append(i)
         
-        if annotated_only == True:
+        if annotated_only:
             #drop not annotated patches
             print(f"dropping {len(patches_to_drop_i)} non-annotated patches")
             for dropped, i_to_drop in enumerate(patches_to_drop_i):
