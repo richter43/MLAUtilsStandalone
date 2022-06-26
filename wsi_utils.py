@@ -21,140 +21,42 @@ from .ancillary_definitions import RenalCancerType
 from .annotation_utils_asap import get_points_xml_asap, get_region_lv0
 from .annotation_utils_dataclasses import PointInfo
 from .wsi_utils_dataclasses import Section, SlideMetadata
-from .utils import UtilException, get_label_from_path, multiprocessing, std_standalone
+from .utils import UtilException, get_label_from_path, image_entropy, CropType, slide_read_region
 
 
 class WSIDatasetTorch(Dataset):
 
-    def __init__(self, section_list: List[Section], crop_size: int, std_threshold: float, one_hot: bool = True, remove_white: bool = True, annotated_only: bool = False):
+    def __init__(self, section_list: List[Section], crop_size: int, one_hot: bool = True, annotated_only: bool = False):
         super(WSIDatasetTorch, self).__init__()
         self.section_list : List[Section] = section_list
         self.crop_size = crop_size
-        self.std_threshold = std_threshold
         self.num_classes = len(RenalCancerType)
         self.one_hot = one_hot
-        self.max_threads = pathos.multiprocessing.cpu_count()
-
-        self.annotated_only = annotated_only
-        if self.annotated_only == False:
-            #we skip this computation for speedup as we don't need it (we assume the annotations don't depict the background of the wsi)
-
-            gen = [(section.wsi_path, section.x, section.y, section.level, section.size) for section in self.section_list]
-            std_list = std_standalone(gen)
-            for section, std in zip(self.section_list, std_list):
-                section.std = std
-            
-            # self._parallel_compute_std()
-            # self._compute_std_naive()
-        
-        self.remove_white = remove_white
-        if remove_white and self.annotated_only == False:
-            self._filter_white()
-
-
-    def _compute_std_naive(self):
-
-        previous_wsi_path = None
-
-        for index in range(len(self.section_list)):
-            section = self.section_list[index]
-            
-            if previous_wsi_path is not None and section.wsi_path == previous_wsi_path:
-                pass
-            else:
-                slide = openslide.OpenSlide(section.wsi_path)
-
-            previous_wsi_path = section.wsi_path
-            pil_object = slide.read_region([section.x,
-                                            section.y],
-                                        section.level,
-                                        [section.size,
-                                            section.size])
-
-            pil_object = pil_object.convert('RGB')
-
-            section.std = f
-
-    def _parallel_compute_std(self):
-        """Computes standard deviation of the extracted image, this method is about 3x faster than the naive implementation
-
-        Args:
-            step (int, optional): _description_. Defaults to cpu_count.
-        """
-        threads = []
-
-        step = int(len(self.section_list) // self.max_threads)
-
-        for idx in range(0,len(self.section_list),step):
-
-            tmp_thread = threading.Thread(target=self._compute_std, args=[idx, step, len(self.section_list)])
-            tmp_thread.start()
-            threads.append(tmp_thread)
-
-        for thread in threads:
-            thread.join()
-
-    def _compute_std(self, start, step, stop):
-
-        previous_wsi_path = None
-
-        for index in range(start, start+step if start + step < stop else stop):
-
-            section = self.section_list[index]
-            
-            if previous_wsi_path is not None and section.wsi_path == previous_wsi_path:
-                pass
-            else:
-                slide = openslide.OpenSlide(section.wsi_path)
-
-            previous_wsi_path = section.wsi_path
-            pil_object = slide.read_region([section.x,
-                                            section.y],
-                                        section.level,
-                                        [section.size,
-                                            section.size])
-
-            pil_object = pil_object.convert('RGB')
-            section.std = np.std(np.array(pil_object))
-
-
-    def _filter_white(self):
-        self.section_list = [section for section in self.section_list if section.std > self.std_threshold]
 
     def __len__(self):
         return len(self.section_list)
 
     def __getitem__(self, index):
 
-        slide = openslide.OpenSlide(self.section_list[index].wsi_path)
-        pil_object = slide.read_region([self.section_list[index].x,
-                                        self.section_list[index].y],
-                                       self.section_list[index].level,
-                                       [self.section_list[index].size,
-                                        self.section_list[index].size])
-        pil_object = pil_object.convert('RGB')
+        section = self.section_list[index]
+
+        slide = openslide.OpenSlide(section.wsi_path)
+        pil_object = slide_read_region(slide, section.x, section.y, section.level, section.size)
         pil_object = pil_object.resize(size=(self.crop_size, self.crop_size))
         
         torch_tensor_convertor = transforms.ToTensor()
         img = torch_tensor_convertor(pil_object)
-        if self.annotated_only == False:
-            if self.section_list[index].std > self.std_threshold:
-                label = torch.tensor(self.section_list[index].label)
-            else:
-                # Returning -1 means that the image looks like a white square
-                label = torch.tensor(-1)
-        else:
-            #patch can never be white, label is always accurate (we also avoided computing the standard deviation for speedup)
-            label = torch.tensor(self.section_list[index].label)
+
+        #Patch can never be white, label is always accurate
+        label = torch.tensor(section.label)
+
         if self.one_hot and label != -1:
             return img, F.one_hot(label, num_classes=self.num_classes)
-        elif self.one_hot:
-            return img, torch.zeros(self.num_classes)
         else: 
             return img, label
 
 class SlideManager:
-    def __init__(self, tile_size: int, overlap: bool = True, verbose: bool = False):
+    def __init__(self, tile_size: int, overlap: bool = True, verbose: bool = False, information_filter=40.0):
         """
         # SlideManager provides an easy way to generate a cropList object.
         # This object is not tied to a particular slide and can be reused to crop many slides using the same settings.
@@ -163,6 +65,7 @@ class SlideManager:
         self.level = 0
         self.overlap = int(1/overlap)
         self.verbose = verbose
+        self.information_filter = information_filter
         self.__sections: List[Section]= []
 
     # The usage of an encapsulating dunder doesn't seem to fit the use case here.
@@ -172,7 +75,8 @@ class SlideManager:
                              width: int,
                              height: int,
                              downsample_factor: float,
-                             filepath: str):
+                             filepath: str, 
+                             slide: openslide.OpenSlide):
         side = self.tile_size
         step = side // self.overlap
         # The usage of an encapsulating dunder doesn't seem to fit the use case here.
@@ -185,7 +89,10 @@ class SlideManager:
 
         for y, x in itertools.product(range(0, height - side, step), range(0, width - side, step)):
             n_tiles += 1
-            self.__sections.append(Section(x=x_start + x, y=y_start + y, size=int(side // downsample_factor), level=self.level, wsi_path=filepath, label=label))
+            s = Section(x=x_start + x, y=y_start + y, size=int(side // downsample_factor), level=self.level, wsi_path=filepath, label=label)
+            if (information := image_entropy(slide, s)) > self.information_filter:
+                s.std = information
+                self.__sections.append(s)
 
         if self.verbose:
             print("-"*len("{} stats:".format(filepath)))
@@ -200,20 +107,21 @@ class SlideManager:
             print("-" * len("{} stats:".format(filepath)))
 
     def __generate_sections_xml(self,
-                                slide_x_init: int,
-                                slide_y_init: int,
-                                width: int,
-                                height: int,
-                                downsample_factor: float,
-                                filepath: str, 
+                                filepath: str,
                                 point_info: PointInfo):
+
+        slide = openslide.OpenSlide(filepath)
+        downsample_factor = slide.level_downsamples[self.level]
+
+        _ , (bounds_x, bounds_y, bounds_width, bounds_height) = get_region_lv0(slide)
+
         side = self.tile_size
         step = side // self.overlap
         # The usage of an encapsulating dunder doesn't seem to fit the use case here.
         self.__sections = []
 
-        slide_x_final = slide_x_init + width
-        slide_y_final = slide_y_init + height
+        bounds_x_final = bounds_x + bounds_width
+        bounds_y_final = bounds_y + bounds_height
 
         n_tiles = 0
         # N.B. Tiles are considered in the 0 level
@@ -224,24 +132,26 @@ class SlideManager:
 
             label = ann_data.group_name
 
-            overlayed_x_init = slide_x_init if (x_init - side) < slide_x_init else x_init - side
-            overlayed_y_init = slide_y_init if (y_init - side) < slide_y_init else y_init - side
-            overlayed_x_final = slide_x_final if (x_final + side) > slide_x_final else x_final + side
-            overlayed_y_final = slide_y_final if (y_final + side) > slide_y_final else y_final + side
+            #NOTE: Overlayed means that the crops are extracted from a larger, overlapping rectangle (larger by size of side)
+            overlayed_x_init = bounds_x if (x_init - side) < bounds_x else x_init - side
+            overlayed_y_init = bounds_y if (y_init - side) < bounds_y else y_init - side
+            overlayed_x_final = bounds_x_final if (x_final + side) > bounds_x_final else x_final + side
+            overlayed_y_final = bounds_y_final if (y_final + side) > bounds_y_final else y_final + side
 
             for y, x in itertools.product(range(int(overlayed_y_init), int(overlayed_y_final), step), range(int(overlayed_x_init), int(overlayed_x_final), step)):
                 n_tiles += 1
-                
-                s = Section(x=x, y=y, size=int(side // downsample_factor), level=self.level, wsi_path=filepath, label=ann_data.group_name)
-                self.__sections.append(s)
+                s = Section(x=x, y=y, size=int(side // downsample_factor), level=self.level, wsi_path=filepath, label=label)
+                if (information := image_entropy(slide, s)) > self.information_filter:
+                    s.std = information
+                    self.__sections.append(s)
 
         if self.verbose:
             print("-"*len("{} stats:".format(filepath)))
             print("{} stats:".format(filepath))
             print("step: {}".format(step))
-            print("y: {}".format(slide_y_init))
-            print("x: {}".format(slide_x_init))
-            print("slide width {}".format(width))
+            print("y: {}".format(bounds_y))
+            print("x: {}".format(bounds_x))
+            print("slide width {}".format(bounds_width))
             print("slide height {}".format(height))
             print("downsample factor: {}".format(downsample_factor))
             print("# of tiles:{}".format(n_tiles))
@@ -249,23 +159,12 @@ class SlideManager:
 
     def __crop_xml(self, slide_metadata: SlideMetadata, annotated_only: bool) -> List[Section]:
 
-        slide = openslide.OpenSlide(slide_metadata.wsi_path)
-        downsample = slide.level_downsamples[self.level]
-
-        _ , (bounds_x, bounds_y, bounds_width, bounds_height) = get_region_lv0(slide)
-
         if annotated_only:
             point_info = PointInfo(get_points_xml_asap(slide_metadata.annotation_path))
         else:
             point_info = PointInfo(get_points_xml_asap(slide_metadata.annotation_path, "tumor"))
 
-        self.__generate_sections_xml(bounds_x,
-                                    bounds_y,
-                                    bounds_width,
-                                    bounds_height,
-                                    downsample,
-                                    slide_metadata.wsi_path,
-                                    point_info)
+        self.__generate_sections_xml(slide_metadata.wsi_path, point_info)
 
         patches_to_drop_i = []
 
@@ -286,7 +185,6 @@ class SlideManager:
                         break
             else:
                 label = RenalCancerType.NOT_CANCER.value
-                    
 
             if not annotated_only:
                 #should be backward compatible
@@ -319,7 +217,8 @@ class SlideManager:
                                   bounds_width,
                                   bounds_height,
                                   downsample,
-                                  slide_metadata.annotation_path)
+                                  slide_metadata.annotation_path, 
+                                  slide)
 
         return self.__sections
 
@@ -337,13 +236,7 @@ class SlideManager:
         if slide_metadata.is_roi:
             return self.__crop_roi(slide_metadata)
         else:
-            return self.__crop_xml(slide_metadata, annotated_only)
-
-# def thread_manual_fn(section_manager: SlideManager, slide_metadata: SlideMetadata, annotated_only: bool, return_list: List[Section]):
-#     try:
-#         return_list += section_manager.crop(slide_metadata, annotated_only=annotated_only)
-#     except UtilException:
-#         return
+             return self.__crop_xml(slide_metadata, annotated_only)
 
 def pool_fn(args):
     section_manager, slide_metadata, annotated_only = args
@@ -363,9 +256,7 @@ class DatasetManager:
                  std_threshold: int = 20,
                  annotated_only: bool = False,
                  verbose: bool = False,
-                 standard: bool = True,
-                 pool_threading: bool = False,
-                 pool_processing: bool = False):
+                 crop_type: CropType = CropType.pool_threading):
         """_summary_
 
         Args:
@@ -377,6 +268,7 @@ class DatasetManager:
             one_hot (bool, optional): Encoded to one hot. Defaults to True.
             std_threshold (int, optional): _description_. Defaults to 20.
             verbose (bool, optional): Prints further information about the execution. Defaults to False.
+            crop_type (CropType, optional): The action of cropping and computing amount of information is done either in a serial manner or in parallel. Defaults to CropType.pool_threading.
         """
 
         self.crop_size = tile_size
@@ -390,82 +282,47 @@ class DatasetManager:
         self.section_manager = SlideManager(tile_size, overlap=self.overlap, verbose=verbose)
         self.verbose = verbose
         self.tile_placeholders = []
-        self.standard_execution = standard
-        self.pool_threading = pool_threading
-        self.pool_processing = pool_processing
+        self.crop_type = crop_type
 
-        #NOTE: It was attempted to parallelize this code section (Using colab, which only has two CPU cores) 
-        # through multiprocessing (pathos library) and multithreading (Python's threading library), however, it took much 
-        # longer acquiring locks than in the actual computation
+        #NOTE: it is recommended to use either multiprocessing or multithreaded
 
         len_inputs = 0
-        if self.standard_execution:
+        if self.crop_type == CropType.standard:
             for slide_metadata in inputs:
                 try:
                     self.tile_placeholders += self.section_manager.crop(slide_metadata, annotated_only=annotated_only)
                     len_inputs += 1
                 except UtilException:
                     continue
-        # Disabled given that it needs a global counter and it's already expensive as it is
-        # elif self.manual_threading:
-        #     self.tile_placeholders = self._multithreaded_manual_cropping(inputs)
-        elif self.pool_threading:
-            len_inputs, self.tile_placeholders = self._multithreaded_pooling_cropping(inputs)
-        elif self.pool_processing:
-            len_inputs, self.tile_placeholders = self._multithreaded_pooling_cropping(inputs)
+        elif self.crop_type == CropType.pool_threading or self.crop_type == CropType.pool_multiprocessing:
+            len_inputs, self.tile_placeholders =  self._pooling_cropping(inputs)
 
         print("*"*len("Found in total {} tiles.".format(len(self.tile_placeholders))))
         print("Found in total:\n {} tiles\n belonging to {} slides".format(len(self.tile_placeholders),
                                                                            len_inputs))
         print("*" * len("Found in total {} tiles.".format(len(self.tile_placeholders))))
 
-
-    # def _multithreaded_manual_cropping(self, inputs):
-
-    #     tmp_thread_list = []
-    #     tmp_returns = []
-
-    #     for slide_metadata in inputs:
-    #         tmp_thread = threading.Thread(target=thread_manual_fn, args=[SlideManager(self.crop_size, overlap=self.overlap, verbose=self.verbose), slide_metadata, annotated_only, tmp_returns])
-    #         tmp_thread_list.append(tmp_thread)
-    #         tmp_thread.start()
-    #         if len(tmp_thread_list) > pathos.multiprocessing.cpu_count():
-    #             tmp_thread = tmp_thread_list.pop(0)
-    #             tmp_thread.join()
-                
-    #     for thread in tmp_thread_list:
-    #         thread.join()
-
-    #     return tmp_returns
-
     def _get_iter_list(self, inputs):
 
         for slide_metadata in inputs:
             yield (SlideManager(self.crop_size, overlap=self.overlap, verbose=self.verbose), slide_metadata, self.annotated_only)
 
-    def _multithreaded_pooling_cropping(self, inputs):
+    def _pooling_cropping(self, inputs):
 
         iter_list = self._get_iter_list(inputs)
 
-        with pathos.threading.ThreadPool() as pool:
+        if self.crop_type == CropType.pool_threading:
+            pool_fn_type = pathos.threading.ThreadPool
+        else:
+            pool_fn_type = pathos.multiprocessing.ProcessPool
+
+        with pool_fn_type() as pool:
             returns = pool.imap(pool_fn, iter_list, chunksize=5)
 
         returns = list(filter(lambda x: x is not None, returns))
         len_returns = len(returns)
 
-        return len_returns, [elem for elem_list in returns for elem in elem_list]
-
-    def _multiprocessing_pooling_cropping(self, inputs):
-
-        iter_list = self._get_iter_list(inputs)
-
-        with pathos.multiprocessing.ProcessPool() as pool:
-            returns = pool.imap(pool_fn, iter_list, chunksize=5)
-
-        returns = list(filter(lambda x: x is not None, returns))
-        len_returns = len(returns)
-
-        return len_returns, [elem for elem_list in returns for elem in elem_list]
+        return len_returns, [section for section_list in returns for section in section_list]
 
     def _to_image(self, x):
 
@@ -530,7 +387,7 @@ class DatasetManager:
         return dataset
 
     def make_pytorch_dataset(self, remove_white: bool = True) -> Dataset:
-        return WSIDatasetTorch(self.tile_placeholders, self.crop_size, self.std_threshold, self.one_hot, remove_white and self.annotated_only == False, annotated_only=self.annotated_only)
+        return WSIDatasetTorch(section_list=self.tile_placeholders, crop_size=self.crop_size, one_hot=self.one_hot, annotated_only=self.annotated_only)
 
     @property
     def get_tile_placeholders(self):

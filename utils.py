@@ -1,10 +1,18 @@
+import os
+
+import matplotlib.pyplot as plt
 import numpy as np
-import seaborn as sns
-from matplotlib import cm as plt_cmap
-from shapely.geometry import Polygon
 import openslide
 import pathos
+import seaborn as sns
+from matplotlib import cm as plt_cmap
+from PIL import Image
+from shapely.geometry import Polygon
+import enum
+
 from .ancillary_definitions import RenalCancerType
+from .wsi_utils_dataclasses import Section
+
 
 def seaborn_cm(cm, ax, tick_labels, fontsize=14):
 
@@ -40,40 +48,26 @@ def get_label_from_path(path: str):
     else:
         return RenalCancerType.CLEAR_CELL.value
 
-def singlethread(func):
-    def wrapper_mp(iter_obj):
-        returns = [func(*i) for i in iter_obj]
-        return returns
-    return wrapper_mp
+def image_entropy(slide: openslide.OpenSlide, section: Section):
 
-def multiprocessing(func):
-    def wrapper_mp(iter_obj):
-        with pathos.multiprocessing.ProcessPool() as pool:
-            #https://stackoverflow.com/questions/54324215/does-pathos-multiprocessing-have-starmap
-            returns = pool.map(lambda x: func(*x), iter_obj)
-        return returns
-    return wrapper_mp
+    pil_obj = slide_read_region(slide, section.x, section.y, section.level, section.size)
+    entropy = pil_obj.entropy() ** 2
+    return entropy
 
-def multithreading(func):
-    def wrapper_mt(iter_obj):
-        with pathos.multiprocessing.ThreadingPool() as pool:
-            returns = pool.map(lambda x: func(*x), iter_obj)
-        return returns
-    return wrapper_mt
+def slide_read_region(slide: openslide.OpenSlide, x: int, y: int, level: int, size: int) -> Image:
 
-@multiprocessing
-def std_standalone(wsi_path: str, x: int, y: int, level: int, size: int):
-    
-    slide = openslide.OpenSlide(wsi_path)
-    pil_object = slide.read_region([x, y],
-                                    level,
-                                    [size, size])
+    pil_object = slide.read_region([x, y], level, [size, size])
     pil_object = pil_object.convert('RGB')
 
-    return np.std(np.array(pil_object))
+    return pil_object
 
 class UtilException(BaseException):
     pass
 
 class SelectedGroupNotFound(UtilException):
     pass
+
+class CropType(enum.Enum):
+    standard = 0
+    pool_threading = 1
+    pool_multiprocessing = 2
