@@ -90,7 +90,7 @@ class SlideManager:
         # Attempted to optimize this section with processor and threads, their lifetime is way too small to justify the locks 
         label = get_label_from_path(filepath)
 
-        n_tiles = self.__create_sections(x_start, x_start + width - side, y_start, y_start + height - side, step, side, downsample_factor)
+        n_tiles = self.__create_sections(x_start, x_start + width - side, y_start, y_start + height - side, step, side, downsample_factor, filepath, label, slide)
 
         if self.verbose:
             print("-"*len("{} stats:".format(filepath)))
@@ -135,7 +135,7 @@ class SlideManager:
             overlayed_x_final = bounds_x_final if (x_final + side) > bounds_x_final else x_final + side
             overlayed_y_final = bounds_y_final if (y_final + side) > bounds_y_final else y_final + side
 
-            n_tiles += self.__create_sections(int(overlayed_x_init), int(overlayed_x_final), int(overlayed_y_init), int(overlayed_y_final), step, side, downsample_factor)
+            n_tiles += self.__create_sections(int(overlayed_x_init), int(overlayed_x_final), int(overlayed_y_init), int(overlayed_y_final), step, side, downsample_factor, filepath, label, slide)
 
         if self.verbose:
             print("-"*len("{} stats:".format(filepath)))
@@ -149,7 +149,7 @@ class SlideManager:
             print("# of tiles:{}".format(n_tiles))
             print("-" * len("{} stats:".format(filepath)))
 
-    def __create_sections(self, x_init: int, x_final: int, y_init: int, y_final, step: int, side: int, downsample_factor: float):
+    def __create_sections(self, x_init: int, x_final: int, y_init: int, y_final, step: int, side: int, downsample_factor: float, filepath: str, label: str, slide: openslide.OpenSlide):
 
         n_tiles = 0
 
@@ -157,9 +157,9 @@ class SlideManager:
             n_tiles += 1
             s = Section(x=x, y=y, size=int(side // downsample_factor), level=self.level, wsi_path=filepath, label=label)
             if self.remove_low_information:
-                self.logger.debug(f"Reading: section: {s}\nSlide:{slide}")
+                # self.logger.debug(f"Reading: section: {s}\nSlide:{slide}")
                 information = image_entropy(slide, s)
-                self.logger.debug(f"Amount of information: {information}")
+                # self.logger.debug(f"Amount of information: {information}")
                 if information > self.information_threshold:
                     s.std = information
                     self.__sections.append(s)
