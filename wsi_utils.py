@@ -56,7 +56,7 @@ class WSIDatasetTorch(Dataset):
             return img, label
 
 class SlideManager:
-    def __init__(self, tile_size: int, overlap: bool = True, verbose: bool = False, information_filter=40.0):
+    def __init__(self, tile_size: int, overlap: bool = True, verbose: bool = False, remove_low_information=True, information_threshold=40.0):
         """
         # SlideManager provides an easy way to generate a cropList object.
         # This object is not tied to a particular slide and can be reused to crop many slides using the same settings.
@@ -65,7 +65,8 @@ class SlideManager:
         self.level = 0
         self.overlap = int(1/overlap)
         self.verbose = verbose
-        self.information_filter = information_filter
+        self.remove_low_information = remove_low_information
+        self.information_threshold = information_threshold
         self.__sections: List[Section]= []
 
     # The usage of an encapsulating dunder doesn't seem to fit the use case here.
@@ -90,9 +91,12 @@ class SlideManager:
         for y, x in itertools.product(range(0, height - side, step), range(0, width - side, step)):
             n_tiles += 1
             s = Section(x=x_start + x, y=y_start + y, size=int(side // downsample_factor), level=self.level, wsi_path=filepath, label=label)
-            information = image_entropy(slide, s)
-            if information > self.information_filter:
-                s.std = information
+            if self.remove_low_information:
+                information = image_entropy(slide, s)
+                if information > self.information_threshold:
+                    s.std = information
+                    self.__sections.append(s)
+            else:
                 self.__sections.append(s)
 
         if self.verbose:
@@ -142,9 +146,12 @@ class SlideManager:
             for y, x in itertools.product(range(int(overlayed_y_init), int(overlayed_y_final), step), range(int(overlayed_x_init), int(overlayed_x_final), step)):
                 n_tiles += 1
                 s = Section(x=x, y=y, size=int(side // downsample_factor), level=self.level, wsi_path=filepath, label=label)
-                information = image_entropy(slide, s)
-                if information > self.information_filter:
-                    s.std = information
+                if self.remove_low_information:
+                    information = image_entropy(slide, s)
+                    if information > self.information_threshold:
+                        s.std = information
+                        self.__sections.append(s)
+                else:
                     self.__sections.append(s)
 
         if self.verbose:
@@ -255,7 +262,8 @@ class DatasetManager:
                  channels: int = 3,
                  batch_size: int = 32,
                  one_hot: bool = True,
-                 std_threshold: int = 20,
+                 information_threshold: float = 40.0,
+                 remove_low_information: bool = True,
                  annotated_only: bool = False,
                  verbose: bool = False,
                  crop_type: CropType = CropType.pool_threading):
@@ -276,12 +284,12 @@ class DatasetManager:
         self.crop_size = tile_size
         self.one_hot = one_hot
         self.overlap = overlap
-        self.std_threshold = std_threshold
+        self.information_threshold = information_threshold
         self.num_classes = len(RenalCancerType)
         self.channels = channels
         self.batch_size = batch_size
         self.annotated_only = annotated_only
-        self.section_manager = SlideManager(tile_size, overlap=self.overlap, verbose=verbose)
+        self.section_manager = SlideManager(tile_size, overlap=self.overlap, verbose=verbose, remove_low_information=remove_low_information, information_threshold=information_threshold)
         self.verbose = verbose
         self.tile_placeholders = []
         self.crop_type = crop_type
@@ -340,7 +348,7 @@ class DatasetManager:
         label = self.tile_placeholders[x].label
         im_size = pil_object.size
         img = tf.reshape(tf.cast(pil_object.getdata(), dtype=tf.uint8), (im_size[0], im_size[1], 3))
-        if self.tile_placeholders[x].std > self.std_threshold:
+        if self.tile_placeholders[x].std > self.information_threshold:
             return tf.image.convert_image_dtype(img, dtype=tf.float32), tf.cast(label, tf.float32)
         else:
             return tf.image.convert_image_dtype(img, dtype=tf.float32), tf.cast(-1, tf.float32)
@@ -397,7 +405,7 @@ class DatasetManager:
 
     @property
     def get_tile_placeholders_filt(self):
-        return list(filter(lambda x: x.std > self.std_threshold, self.tile_placeholders))
+        return list(filter(lambda x: x.std > self.information_threshold, self.tile_placeholders))
 
 
 def filt_tile_placeholders(tile_placeholders, threshold):
