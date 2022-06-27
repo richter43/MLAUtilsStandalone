@@ -90,7 +90,8 @@ class SlideManager:
         for y, x in itertools.product(range(0, height - side, step), range(0, width - side, step)):
             n_tiles += 1
             s = Section(x=x_start + x, y=y_start + y, size=int(side // downsample_factor), level=self.level, wsi_path=filepath, label=label)
-            if (information := image_entropy(slide, s)) > self.information_filter:
+            information = image_entropy(slide, s)
+            if information > self.information_filter:
                 s.std = information
                 self.__sections.append(s)
 
@@ -141,7 +142,8 @@ class SlideManager:
             for y, x in itertools.product(range(int(overlayed_y_init), int(overlayed_y_final), step), range(int(overlayed_x_init), int(overlayed_x_final), step)):
                 n_tiles += 1
                 s = Section(x=x, y=y, size=int(side // downsample_factor), level=self.level, wsi_path=filepath, label=label)
-                if (information := image_entropy(slide, s)) > self.information_filter:
+                information = image_entropy(slide, s)
+                if information > self.information_filter:
                     s.std = information
                     self.__sections.append(s)
 
