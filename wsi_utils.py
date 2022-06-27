@@ -86,21 +86,11 @@ class SlideManager:
         # The usage of an encapsulating dunder doesn't seem to fit the use case here.
         self.__sections = []
 
-        n_tiles = 0
         # N.B. Tiles are considered in the 0 level
         # Attempted to optimize this section with processor and threads, their lifetime is way too small to justify the locks 
         label = get_label_from_path(filepath)
 
-        for y, x in itertools.product(range(0, height - side, step), range(0, width - side, step)):
-            n_tiles += 1
-            s = Section(x=x_start + x, y=y_start + y, size=int(side // downsample_factor), level=self.level, wsi_path=filepath, label=label)
-            if self.remove_low_information:
-                information = image_entropy(slide, s)
-                if information > self.information_threshold:
-                    s.std = information
-                    self.__sections.append(s)
-            else:
-                self.__sections.append(s)
+        n_tiles = self.__create_sections(x_start, x_start + width - side, y_start, y_start + height - side, step, side, downsample_factor)
 
         if self.verbose:
             print("-"*len("{} stats:".format(filepath)))
@@ -128,10 +118,9 @@ class SlideManager:
         # The usage of an encapsulating dunder doesn't seem to fit the use case here.
         self.__sections = []
 
+        n_tiles = 0
         bounds_x_final = bounds_x + bounds_width
         bounds_y_final = bounds_y + bounds_height
-
-        n_tiles = 0
         # N.B. Tiles are considered in the 0 level
         # Attempted to optimize this section with processor and threads, their lifetime is way too small to justify the locks
 
@@ -146,16 +135,7 @@ class SlideManager:
             overlayed_x_final = bounds_x_final if (x_final + side) > bounds_x_final else x_final + side
             overlayed_y_final = bounds_y_final if (y_final + side) > bounds_y_final else y_final + side
 
-            for y, x in itertools.product(range(int(overlayed_y_init), int(overlayed_y_final), step), range(int(overlayed_x_init), int(overlayed_x_final), step)):
-                n_tiles += 1
-                s = Section(x=x, y=y, size=int(side // downsample_factor), level=self.level, wsi_path=filepath, label=label)
-                if self.remove_low_information:
-                    information = image_entropy(slide, s)
-                    if information > self.information_threshold:
-                        s.std = information
-                        self.__sections.append(s)
-                else:
-                    self.__sections.append(s)
+            n_tiles += self.__create_sections(int(overlayed_x_init), int(overlayed_x_final), int(overlayed_y_init), int(overlayed_y_final), step, side, downsample_factor)
 
         if self.verbose:
             print("-"*len("{} stats:".format(filepath)))
@@ -168,6 +148,24 @@ class SlideManager:
             print("downsample factor: {}".format(downsample_factor))
             print("# of tiles:{}".format(n_tiles))
             print("-" * len("{} stats:".format(filepath)))
+
+    def __create_sections(self, x_init: int, x_final: int, y_init: int, y_final, step: int, side: int, downsample_factor: float):
+
+        n_tiles = 0
+
+        for y, x in itertools.product(range(y_init, y_final, step), range(x_init, x_final, step)):
+            n_tiles += 1
+            s = Section(x=x, y=y, size=int(side // downsample_factor), level=self.level, wsi_path=filepath, label=label)
+            if self.remove_low_information:
+                self.logger.debug(f"Reading: section: {s}\nSlide:{slide}")
+                information = image_entropy(slide, s)
+                self.logger.debug(f"Amount of information: {information}")
+                if information > self.information_threshold:
+                    s.std = information
+                    self.__sections.append(s)
+            else:
+                self.__sections.append(s)
+        return n_tiles
 
     def __crop_xml(self, slide_metadata: SlideMetadata, annotated_only: bool) -> List[Section]:
 
