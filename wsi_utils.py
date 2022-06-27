@@ -15,6 +15,7 @@ from matplotlib import cm
 from PIL import Image, ImageFilter
 from torch.utils.data import Dataset
 from torchvision import transforms
+import logging
 import time
 
 from .ancillary_definitions import RenalCancerType
@@ -22,6 +23,7 @@ from .annotation_utils_asap import get_points_xml_asap, get_region_lv0
 from .annotation_utils_dataclasses import PointInfo
 from .wsi_utils_dataclasses import Section, SlideMetadata
 from .utils import UtilException, get_label_from_path, image_entropy, CropType, slide_read_region
+from .log_utils import LOGGER_NAME
 
 
 class WSIDatasetTorch(Dataset):
@@ -68,6 +70,7 @@ class SlideManager:
         self.remove_low_information = remove_low_information
         self.information_threshold = information_threshold
         self.__sections: List[Section]= []
+        self.logger = logging.getLogger(LOGGER_NAME)
 
     # The usage of an encapsulating dunder doesn't seem to fit the use case here.
     def __generate_sections(self,
@@ -205,10 +208,9 @@ class SlideManager:
                 else:
                     #mark the patch as dropped, it's not annotated and we don't want it
                     patches_to_drop_i.append(i)
-        
+
         if annotated_only:
-            #drop not annotated patches
-            print(f"dropping {len(patches_to_drop_i)} non-annotated patches")
+            self.logger.debug(f"Dropping {len(patches_to_drop_i)} non-annotated patches")
             for dropped, i_to_drop in enumerate(patches_to_drop_i):
                 self.__sections.pop(i_to_drop-dropped)
 
@@ -243,9 +245,11 @@ class SlideManager:
         """
 
         if slide_metadata.is_roi:
+            self.logger.debug("Cropping ROI")
             return self.__crop_roi(slide_metadata)
         else:
-             return self.__crop_xml(slide_metadata, annotated_only)
+            self.logger.debug("Cropping XML")
+            return self.__crop_xml(slide_metadata, annotated_only)
 
 def pool_fn(args):
     section_manager, slide_metadata, annotated_only = args
@@ -293,11 +297,14 @@ class DatasetManager:
         self.verbose = verbose
         self.tile_placeholders = []
         self.crop_type = crop_type
+        self.logger = logging.getLogger(LOGGER_NAME)
 
         #NOTE: it is recommended to use either multiprocessing or multithreaded
 
         len_inputs = 0
+        
         if self.crop_type == CropType.standard:
+            self.logger.debug("Cropping serialized")
             for slide_metadata in inputs:
                 try:
                     self.tile_placeholders += self.section_manager.crop(slide_metadata, annotated_only=annotated_only)
@@ -322,8 +329,10 @@ class DatasetManager:
         iter_list = self._get_iter_list(inputs)
 
         if self.crop_type == CropType.pool_threading:
+            self.logger.debug("Cropping multithreaded")
             pool_fn_type = pathos.threading.ThreadPool
         else:
+            self.logger.debug("Cropping multiprocessing")
             pool_fn_type = pathos.multiprocessing.ProcessPool
 
         with pool_fn_type() as pool:
