@@ -67,6 +67,12 @@ class UtilException(BaseException):
 class SelectedGroupNotFound(UtilException):
     pass
 
+class InitializationException(UtilException):
+    pass
+
+class TarException(UtilException):
+    pass
+
 class CropType(enum.Enum):
     standard = 0
     pool_threading = 1
