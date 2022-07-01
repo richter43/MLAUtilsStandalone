@@ -1,11 +1,12 @@
+import torch
 from torch.utils.data import Dataset, ConcatDataset
+from torchvision import transforms
 from torchvision.io import read_image
 from torchvision.datasets import DatasetFolder
 
 from typing import Optional, Callable, Tuple, Any, Dict
 
 from .download_utils import download_decrypt_untar
-from ..ancillary_definitions import RenalCancerType
 from ..wsi_utils_dataclasses import PatientMetadata
 
 class PatientImagesDataset(DatasetFolder):
@@ -20,9 +21,12 @@ class PatientImagesDataset(DatasetFolder):
 
         extensions = [".jpg"]
 
-        transform = None
+        # Required to map from ByteTensor to Tensor with Floats (No idea why read_image doesn't already do so)
+        default_float_dtype = torch.get_default_dtype()
+        transform = lambda x: x.to(dtype=default_float_dtype).div(255)
 
         super(DatasetFolder, self).__init__(root, transform=transform, target_transform=target_transform)
+        
         classes, _ = self.find_classes(self.root)
         samples = self.make_dataset(self.root, class_to_idx, extensions, is_valid_file)
 
