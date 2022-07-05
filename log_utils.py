@@ -6,11 +6,14 @@ import logging
 import traceback
 import numpy as np
 from os.path import join
+from threading import Lock
 import shutil
 
 """
     This file might be moved inside utils folder.
 """
+
+LOGGER_NAME = ''
 
 def make_deterministic(seed=0):
     """Make results deterministic. If seed == -1, do not make deterministic.
@@ -39,13 +42,16 @@ def setup_logging(output_folder, console="debug",
         info_filename (str): the name of the info file. if None, don't create info file
         debug_filename (str): the name of the debug file. if None, don't create debug file
     """
+
+    global LOGGER_NAME
+
     if os.path.exists(output_folder):
         print("log folder already exists")#raise FileExistsError(f"{output_folder} already exists!")
     else: 
         os.makedirs(output_folder, exist_ok=True)
     # logging.Logger.manager.loggerDict.keys() to check which loggers are in use
-    base_formatter = logging.Formatter('%(asctime)s   %(message)s', "%Y-%m-%d %H:%M:%S")
-    logger = logging.getLogger('')
+    base_formatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s', "%Y-%m-%d %H:%M:%S")
+    logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(logging.DEBUG)
     
     if info_filename != None:

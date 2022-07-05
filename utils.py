@@ -1,8 +1,18 @@
+import os
+
+import matplotlib.pyplot as plt
 import numpy as np
+import openslide
+import pathos
 import seaborn as sns
 from matplotlib import cm as plt_cmap
+from PIL import Image
 from shapely.geometry import Polygon
+import enum
+
 from .ancillary_definitions import RenalCancerType
+from .wsi_utils_dataclasses import Section
+
 
 def seaborn_cm(cm, ax, tick_labels, fontsize=14):
 
@@ -38,8 +48,26 @@ def get_label_from_path(path: str):
     else:
         return RenalCancerType.CLEAR_CELL.value
 
+def image_entropy(slide: openslide.OpenSlide, section: Section):
+
+    pil_obj = slide_read_region(slide, section.x, section.y, section.level, section.size)
+    entropy = pil_obj.entropy() ** 2
+    return entropy
+
+def slide_read_region(slide: openslide.OpenSlide, x: int, y: int, level: int, size: int) -> Image:
+
+    pil_object = slide.read_region([x, y], level, [size, size])
+    pil_object = pil_object.convert('RGB')
+
+    return pil_object
+
 class UtilException(BaseException):
     pass
 
 class SelectedGroupNotFound(UtilException):
     pass
+
+class CropType(enum.Enum):
+    standard = 0
+    pool_threading = 1
+    pool_multiprocessing = 2
