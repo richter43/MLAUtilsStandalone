@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Optional, List, Union
 from shapely.geometry import Polygon
 from .ancillary_definitions import RenalCancerType
 import os
@@ -50,7 +50,7 @@ class Section:
     size: int
     level: int
     wsi_path: str
-    label: str
+    label: Union[str, int]
     std: float = -1.0
     square: Polygon = field(init=False)
 
