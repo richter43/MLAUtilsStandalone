@@ -7,7 +7,8 @@ from os.path import join, exists
 
 def get_wsi_paths(data_folder: str, annotation_folder: str, wsi_to_load: int):
     #i guess the right way to do this is prepare a text file with paths in advance, divided in test and train wsi by hand
-    wsi_fnames = os.listdir(data_folder)
+    # Filter out elements that are not files
+    wsi_fnames = [filename for filename in os.listdir(data_folder) if os.path.isfile(os.path.join(data_folder, filename))]
     wsi_paths = []
     xml_paths = []
 
