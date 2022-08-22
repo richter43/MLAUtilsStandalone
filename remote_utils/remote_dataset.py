@@ -1,14 +1,26 @@
+from typing import Any, Callable, Dict, Optional, Tuple
+
 import torch
-from torch.utils.data import Dataset, ConcatDataset
-from torchvision import transforms
-from torchvision.io import read_image
-from torchvision.datasets import DatasetFolder
 import torchvision.transforms as transforms
+from torch.utils.data import ConcatDataset, Dataset
+from torchvision import transforms
+from torchvision.datasets import DatasetFolder
+from torchvision.io import read_image
+import numpy as np
+import albumentations as A
 
-from typing import Optional, Callable, Tuple, Any, Dict
-
-from .download_utils import download_decrypt_untar
 from ..wsi_utils_dataclasses import PatientMetadata
+from .download_utils import download_decrypt_untar
+
+def read_image_callback(image_path: str) -> np.ndarray:
+    image = read_image(image_path).numpy().transpose(1,2,0)
+
+    return image
+
+def transform_callable(image):
+  
+  transformed_image = transform(image=image)['image']
+  return transformed_image
 
 def byte_to_default(x):
     default_float_dtype = torch.get_default_dtype()
@@ -30,12 +42,7 @@ class PatientImagesDataset(DatasetFolder):
         # Required to map from ByteTensor to Tensor with Floats (No idea why read_image doesn't already do so by default)
         transform_list = [byte_to_default]
 
-        if imagenet_pretrain:
-            normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                        std=[0.229, 0.224, 0.225])
-            transform_list.append(normalize)
-
-        transform = transforms.Compose(transform_list)
+        transform = TransformImage(imagenet_pretrain=imagenet_pretrain)
 
         super(DatasetFolder, self).__init__(root, transform=transform, target_transform=target_transform)
         
@@ -52,3 +59,32 @@ class PatientImagesDataset(DatasetFolder):
         self.samples = samples
         self.targets = [s[1] for s in samples]
 
+class TransformImage:
+
+    def __init__(self, imagenet_pretrain: bool):
+        super(TransformImage, self).__init__()
+
+        if imagenet_pretrain:
+            mean = (0.485, 0.456, 0.406)
+            std = (0.229, 0.224, 0.225)
+        else:
+            mean = (0, 0, 0)
+            std = (1, 1, 1)
+
+        self.transform = A.Compose([
+                        A.RandomRotate90(),
+                        A.CLAHE(),
+                        A.RandomScale(scale_limit = (1,2)),
+                        A.ElasticTransform(alpha=120, sigma=120 * 0.1, alpha_affine=120 * 0.03),
+                        A.RandomBrightnessContrast(),
+                        A.Blur(blur_limit=3),
+                        A.GaussNoise(),
+                        A.Normalize(mean=mean, std=std),
+                        A.pytorch.ToTensorV2()
+                        ])
+    
+    def __call__(self, image: np.ndarray) -> torch.Tensor:
+
+        transformed_image = self.transform(image=image)['image']
+
+        return transformed_image
