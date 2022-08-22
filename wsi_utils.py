@@ -149,7 +149,7 @@ class SlideManager:
             print("# of tiles:{}".format(n_tiles))
             print("-" * len("{} stats:".format(filepath)))
 
-    def __create_sections(self, x_init: int, x_final: int, y_init: int, y_final, step: int, side: int, downsample_factor: float, filepath: str, label: str, slide: openslide.OpenSlide):
+    def __create_sections(self, x_init: int, x_final: int, y_init: int, y_final, step: int, side: int, downsample_factor: float, filepath: str, label: int, slide: openslide.OpenSlide):
 
         n_tiles = 0
 

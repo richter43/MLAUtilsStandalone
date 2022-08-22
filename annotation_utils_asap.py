@@ -3,7 +3,6 @@ from typing import Dict, List, Tuple, Union, Optional
 import os
 
 import cv2
-import matplotlib.pyplot as plt
 # Make sure to add mir's location to PYTHONPATH (ASAP's directory)
 import json
 import numpy as np

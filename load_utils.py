@@ -1,5 +1,7 @@
 import os
 import torch
+from typing import Dict, Any
+from argparse import Namespace
 import shutil
 from os.path import join, exists
 
@@ -24,8 +26,11 @@ def get_wsi_paths(data_folder: str, annotation_folder: str, wsi_to_load: int):
     
     return wsi_paths, xml_paths
 
-def save_checkpoint(args, state, is_best: bool, filename: str) -> None:
+def save_checkpoint(args: Namespace, state: Dict[str, Any], is_best: bool, filename: str) -> None:
     model_path = join(args.output_folder, filename)
     torch.save(state, model_path)
     if is_best:
         shutil.copyfile(model_path, join(args.output_folder, "best_model.pth"))
+
+def load_checkpoint(filename: str) -> Dict[str, Any]:
+    return torch.load(filename)
