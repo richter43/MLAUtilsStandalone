@@ -12,17 +12,13 @@ import albumentations as A
 from ..wsi_utils_dataclasses import PatientMetadata
 from .download_utils import download_decrypt_untar
 
-def read_image_callback(image_path: str) -> np.ndarray:
-    image = read_image(image_path).numpy().transpose(1,2,0)
-
-    return image
-
 def transform_callable(image):
   
   transformed_image = transform(image=image)['image']
   return transformed_image
 
 def byte_to_default(x):
+    # Required to map from ByteTensor to Tensor with Floats (No idea why read_image doesn't already do so by default)
     default_float_dtype = torch.get_default_dtype()
     return x.to(dtype=default_float_dtype).div(255)
 
@@ -34,15 +30,26 @@ class PatientImagesDataset(DatasetFolder):
         class_to_idx: Dict[str, int],
         target_transform: Optional[Callable] = None,
         is_valid_file: Optional[Callable[[str], bool]] = None,
-        imagenet_pretrain: bool = False
+        imagenet_pretrain: bool = False,
+        augment: bool = False
         ) -> None:
 
         extensions = [".jpg"]
         
-        # Required to map from ByteTensor to Tensor with Floats (No idea why read_image doesn't already do so by default)
-        transform_list = [byte_to_default]
-
-        transform = TransformImage(imagenet_pretrain=imagenet_pretrain)
+        if augment:
+            #I'd prefer the usage of a lambda function, however, PEPs disallow me to do so :(
+            def read_image_callback(image_path: str) -> np.ndarray:
+                image = read_image(image_path).numpy().transpose(1,2,0)
+                return image
+            self.loader = read_image_callback
+            transform = TransformImage(imagenet_pretrain=imagenet_pretrain)
+        else:
+            self.loader = read_image
+            transform_list = [byte_to_default]
+            if imagenet_pretrain:
+                transform_list.append(transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)))
+            transform = transforms.Compose(transform_list)
+                
 
         super(DatasetFolder, self).__init__(root, transform=transform, target_transform=target_transform)
         
@@ -51,7 +58,7 @@ class PatientImagesDataset(DatasetFolder):
 
         self.patient_id = patient_id
 
-        self.loader = read_image
+        
         self.extensions = extensions
 
         self.classes = classes
