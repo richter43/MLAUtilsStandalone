@@ -81,7 +81,6 @@ class TransformImage:
         self.transform = A.Compose([
                         A.RandomRotate90(),
                         A.CLAHE(),
-                        A.RandomScale(scale_limit = (1,2)),
                         A.ElasticTransform(alpha=120, sigma=120 * 0.1, alpha_affine=120 * 0.03),
                         A.RandomBrightnessContrast(),
                         A.Blur(blur_limit=3),
