@@ -1,13 +1,16 @@
-import os
-import sys
-import torch
-import random
+import glob
 import logging
-import traceback
-import numpy as np
-from os.path import join
-from threading import Lock
+import os
+import random
 import shutil
+import sys
+import traceback
+from os.path import join
+from pathlib import Path
+from threading import Lock
+
+import numpy as np
+import torch
 
 """
     This file might be moved inside utils folder.
@@ -28,6 +31,12 @@ def make_deterministic(seed=0):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
+def enumerate_file(output_folder: str, filename: str) -> str:
+    path_filename = Path(filename)
+    glob_magic_match = os.path.join(output_folder, f"{path_filename.stem}*{path_filename.suffix}")
+    num_files = len(glob.glob(glob_magic_match))
+    filename = f"{path_filename.stem}_{num_files}{path_filename.suffix}"
+    return filename
 
 def setup_logging(output_folder, console="debug",
                   info_filename="info.log", debug_filename="debug.log"):
@@ -53,25 +62,29 @@ def setup_logging(output_folder, console="debug",
     base_formatter = logging.Formatter('%(asctime)s %(levelname)s: %(message)s', "%Y-%m-%d %H:%M:%S")
     logger = logging.getLogger(LOGGER_NAME)
     logger.setLevel(logging.DEBUG)
-    
+
+    if console != None and not logger.hasHandlers():
+        console_handler = logging.StreamHandler()
+        if console == "debug": console_handler.setLevel(logging.DEBUG)
+        if console == "info":  console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(base_formatter)
+        logger.addHandler(console_handler)
+
+    # Useful for avoiding the addition of the same handler 
     if info_filename != None:
+        #Mode set to append so that the folder 
+        info_filename = enumerate_file(output_folder, info_filename)
         info_file_handler = logging.FileHandler(join(output_folder, info_filename))
         info_file_handler.setLevel(logging.INFO)
         info_file_handler.setFormatter(base_formatter)
         logger.addHandler(info_file_handler)
     
     if debug_filename != None:
+        debug_filename = enumerate_file(output_folder, debug_filename)
         debug_file_handler = logging.FileHandler(join(output_folder, debug_filename))
         debug_file_handler.setLevel(logging.DEBUG)
         debug_file_handler.setFormatter(base_formatter)
         logger.addHandler(debug_file_handler)
-    
-    if console != None:
-        console_handler = logging.StreamHandler()
-        if console == "debug": console_handler.setLevel(logging.DEBUG)
-        if console == "info":  console_handler.setLevel(logging.INFO)
-        console_handler.setFormatter(base_formatter)
-        logger.addHandler(console_handler)
     
     def exception_handler(type_, value, tb):
         logger.info("\n" + "".join(traceback.format_exception(type, value, tb)))
