@@ -109,7 +109,7 @@ class PatientImagesDataset(DatasetFolder):
             self.targets = [s[1] for s in samples]
 
         # DBG
-        logging.info(f"targets: {self.targets}")
+        #logging.info(f"targets: {self.targets}")
         #logging.info(f"patient id: {patient_id}")
 
 
