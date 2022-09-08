@@ -326,7 +326,7 @@ class DatasetManager:
     def _pooling_cropping(self, inputs):
 
         iter_list = self._get_iter_list(inputs)
-        self.logger.debug(f"Cropping list of {len(iter_list)} elements from {len(inputs)} wsis")
+        #self.logger.debug(f"Cropping list of {len(iter_list)} elements from {len(inputs)} wsis")
         if self.crop_type == CropType.pool_threading:
             self.logger.debug("Cropping multithreaded")
             pool_fn_type = pathos.threading.ThreadPool
