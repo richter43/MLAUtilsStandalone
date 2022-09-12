@@ -27,6 +27,9 @@ def byte_to_default(x):
     default_float_dtype = torch.get_default_dtype()
     return x.to(dtype=default_float_dtype).div(255)
 
+def read_image_callback(image_path: str) -> np.ndarray:
+    image = read_image(image_path).numpy().transpose(1, 2, 0)
+    return image
 
 class PatientImagesDataset(DatasetFolder):
 
@@ -45,9 +48,6 @@ class PatientImagesDataset(DatasetFolder):
 
         if augment:
             # I'd prefer the usage of a lambda function, however, PEPs disallow me to do so :(
-            def read_image_callback(image_path: str) -> np.ndarray:
-                image = read_image(image_path).numpy().transpose(1, 2, 0)
-                return image
             self.loader = read_image_callback
             transform = TransformImage(imagenet_pretrain=imagenet_pretrain)
         else:
