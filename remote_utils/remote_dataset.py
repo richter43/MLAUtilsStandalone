@@ -27,6 +27,9 @@ def byte_to_default(x):
     default_float_dtype = torch.get_default_dtype()
     return x.to(dtype=default_float_dtype).div(255)
 
+def read_image_callback(image_path: str) -> np.ndarray:
+    image = read_image(image_path).numpy().transpose(1, 2, 0)
+    return image
 
 class PatientImagesDataset(DatasetFolder):
 
@@ -45,9 +48,6 @@ class PatientImagesDataset(DatasetFolder):
 
         if augment:
             # I'd prefer the usage of a lambda function, however, PEPs disallow me to do so :(
-            def read_image_callback(image_path: str) -> np.ndarray:
-                image = read_image(image_path).numpy().transpose(1, 2, 0)
-                return image
             self.loader = read_image_callback
             transform = TransformImage(imagenet_pretrain=imagenet_pretrain)
         else:
@@ -72,41 +72,8 @@ class PatientImagesDataset(DatasetFolder):
         self.classes = classes
         self.class_to_idx = class_to_idx
         self.samples = samples
-
-        patients_list = [
-            "HP17.11714",
-            "HP17.7980",
-            "HP17008718",
-            "HP18.11474",
-            "HP18.13618",
-            "HP18.5818",
-            "HP18005453",
-            "HP18009209",
-            "HP18014084",
-            "HP19.1277",
-            "HP19.1773",
-            "HP19.2434",
-            "HP19.3695",
-            "HP19.4075",
-            "HP19.4372",
-            "HP19.5524",
-            "HP19.7421",
-            "HP19.754",
-            "HP19.7715",
-            "HP19.7864",
-            "HP19.7949",
-            "HP19.9421",
-            "HP19.999",
-            "HP19012316",
-            "HP20.2506",
-            "HP20.5602",
-            "HP20002300",
-            "HP20002450",
-        ]
-        if ssrl_learn_patient:
-            self.targets = [patients_list.index(patient_id) for s in samples]
-        else:
-            self.targets = [s[1] for s in samples]
+ 
+        self.targets = [s[1] for s in samples]
 
         # DBG
         #logging.info(f"targets: {self.targets}")

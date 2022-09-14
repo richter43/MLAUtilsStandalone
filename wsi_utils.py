@@ -308,6 +308,7 @@ class DatasetManager:
                     self.tile_placeholders += self.section_manager.crop(slide_metadata, annotated_only=annotated_only)
                     len_inputs += 1
                 except UtilException:
+                    self.logger.debug(f"Exception in pool function")
                     continue
         elif self.crop_type == CropType.pool_threading or self.crop_type == CropType.pool_multiprocessing:
             len_inputs, self.tile_placeholders =  self._pooling_cropping(inputs)
@@ -325,7 +326,7 @@ class DatasetManager:
     def _pooling_cropping(self, inputs):
 
         iter_list = self._get_iter_list(inputs)
-
+        #self.logger.debug(f"Cropping list of {len(iter_list)} elements from {len(inputs)} wsis")
         if self.crop_type == CropType.pool_threading:
             self.logger.debug("Cropping multithreaded")
             pool_fn_type = pathos.threading.ThreadPool
