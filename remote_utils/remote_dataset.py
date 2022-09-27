@@ -1,4 +1,4 @@
-from typing import Any, Callable, Dict, Optional, Tuple, List
+from typing import Any, Callable, Dict, Optional, Tuple, List, Union
 
 import torch
 import torchvision.transforms as transforms
@@ -8,6 +8,7 @@ from torchvision.datasets import DatasetFolder
 from torchvision.io import read_image
 import numpy as np
 import albumentations as A
+import albumentations.pytorch as Apy
 
 from ..wsi_utils_dataclasses import PatientMetadata
 from .download_utils import download_decrypt_untar
@@ -42,6 +43,7 @@ class PatientImagesDataset(DatasetFolder):
                  imagenet_pretrain: bool = False,
                  augment: bool = False,
                  ssrl_learn_patient: bool = False,
+                 replay: bool = False
                  ) -> None:
 
         extensions = [".jpg"]
@@ -49,7 +51,7 @@ class PatientImagesDataset(DatasetFolder):
         if augment:
             # I'd prefer the usage of a lambda function, however, PEPs disallow me to do so :(
             self.loader = read_image_callback
-            transform = TransformImage(imagenet_pretrain=imagenet_pretrain)
+            transform = TransformImage(imagenet_pretrain=imagenet_pretrain, replay=replay)
         else:
             self.loader = read_image
             transform_list = [byte_to_default]
@@ -82,7 +84,7 @@ class PatientImagesDataset(DatasetFolder):
 
 class TransformImage:
 
-    def __init__(self, imagenet_pretrain: bool):
+    def __init__(self, imagenet_pretrain: bool, replay: bool = False):
         super(TransformImage, self).__init__()
 
         if imagenet_pretrain:
@@ -92,8 +94,14 @@ class TransformImage:
             mean = (0, 0, 0)
             std = (1, 1, 1)
 
-        self.transform = A.Compose([
-            A.RandomRotate90(),
+        self.replay = replay
+
+        if self.replay:
+            compose = A.ReplayCompose
+        else:
+            compose = A.Compose
+
+        self.transform = compose([
             A.CLAHE(),
             A.ElasticTransform(alpha=120, sigma=120 * 0.1,
                                alpha_affine=120 * 0.03),
@@ -101,11 +109,15 @@ class TransformImage:
             A.Blur(blur_limit=3),
             A.GaussNoise(),
             A.Normalize(mean=mean, std=std),
-            A.pytorch.ToTensorV2()
+            Apy.ToTensorV2()
         ])
 
-    def __call__(self, image: np.ndarray) -> torch.Tensor:
+    def __call__(self, image: np.ndarray) -> Union[torch.Tensor, Tuple[torch.Tensor, Dict[str, Any]]]:
 
-        transformed_image = self.transform(image=image)['image']
+        transformed_dict = self.transform(image=image)
 
+        if self.replay:
+            return transformed_dict['image'], transformed_dict['replay']
+            
+        transformed_image = transformed_dict['image']
         return transformed_image
